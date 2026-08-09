@@ -5,7 +5,7 @@
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
 	"name": "callboard",
-	"compatibility_date": "2026-08-09",
+	"compatibility_date": "2025-04-04",
 	"main": "./workers/app.ts",
 	"vars": {
 		"VALUE_FROM_CLOUDFLARE": "Hello from Cloudflare"
@@ -16,6 +16,14 @@
 	"upload_source_maps": true,
 	"compatibility_flags": [
 		"nodejs_compat"
+	],
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "callboard",
+			"database_id": "9d0c7ddd-7f4e-487d-ada8-12f2c6e894ef",
+		        "migrations_dir": "./drizzle"
+                }
 	]
 	/**
 	 * Smart Placement
