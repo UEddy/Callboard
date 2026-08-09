@@ -7,6 +7,7 @@ export default [
   route("admin", "routes/admin.tsx", [
     route("submissions", "routes/admin.submissions.tsx"),
     route("decisions", "routes/admin.decisions.tsx"),
+    route("evaluation", "routes/admin.evaluation.tsx"),
     route("onboarding", "routes/admin.onboarding.tsx"),
     route("forms", "routes/admin.forms.tsx"),
     route("forms/:formId", "routes/admin.forms.$formId.tsx"),
