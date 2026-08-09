@@ -8,5 +8,6 @@ export default [
     route("onboarding", "routes/admin.onboarding.tsx"),
     route("forms", "routes/admin.forms.tsx"),
     route("forms/:formId", "routes/admin.forms.$formId.tsx"),
+    route("agenda", "routes/admin.agenda.tsx"),
   ]),
 ] satisfies RouteConfig;
