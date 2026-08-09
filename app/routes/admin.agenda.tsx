@@ -563,8 +563,18 @@ export default function Agenda() {
                                 className="border-b border-r border-slate-100 p-1 align-top last:border-r-0"
                               >
                                 <div
+                                  draggable
+                                  onDragStart={(e) =>
+                                    e.dataTransfer.setData(
+                                      "text/plain",
+                                      JSON.stringify({
+                                        id: starting.id,
+                                        format: starting.format,
+                                      }),
+                                    )
+                                  }
                                   className={[
-                                    "h-full rounded-md border-l-4 px-2 py-1.5",
+                                    "h-full cursor-grab rounded-md border-l-4 px-2 py-1.5 active:cursor-grabbing",
                                     bad
                                       ? "bg-rose-50 ring-1 ring-rose-300"
                                       : "bg-slate-50",
@@ -630,7 +640,9 @@ export default function Agenda() {
                               }}
                               onClick={() => {
                                 if (!picked) return;
-                                const s = unscheduled.find((u) => u.id === picked);
+                                const s =
+                                  unscheduled.find((u) => u.id === picked) ??
+                                  scheduled.find((u) => u.id === picked);
                                 place(picked, s?.format ?? null, room.id, hour, minute);
                               }}
                               className={[
