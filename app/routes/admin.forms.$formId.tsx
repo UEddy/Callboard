@@ -525,6 +525,13 @@ export default function FormBuilder() {
         <button className="rounded-md border border-line-strong px-2.5 py-1.5 text-[13px] font-medium text-body hover:bg-subtle">
           Add field
         </button>
+        <Link
+          to="/admin/library?tab=fields"
+          prefetch="intent"
+          className="self-center text-[12px] text-dim underline-offset-2 hover:text-strong hover:underline"
+        >
+          Manage the field library
+        </Link>
       </Form>
     </section>
   );
@@ -626,7 +633,14 @@ export default function FormBuilder() {
           </h2>
           <p className="mb-3 mt-0.5 text-[13px] text-dim">
             The submitter is always added as the primary Speaker. These rules
-            govern anyone else they put on the submission.
+            govern anyone else they put on the submission. Roles come from the{" "}
+            <Link
+              to="/admin/library?tab=personas"
+              className="text-accent-text underline underline-offset-2"
+            >
+              persona library
+            </Link>
+            .
           </p>
 
           <Form

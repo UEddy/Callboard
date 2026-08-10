@@ -30,6 +30,7 @@ const NAV = [
     heading: "Collect & review",
     items: [
       { to: "/admin/forms", label: "Forms" },
+      { to: "/admin/library", label: "Library" },
       { to: "/admin/evaluation", label: "Evaluation" },
       { to: "/admin/agenda", label: "Agenda" },
     ],

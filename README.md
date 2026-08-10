@@ -42,6 +42,8 @@ Everything a rule does is recorded on the submission as a routing trail and show
 
 Submissions carry as many people as the form allows. The builder picks which roles submitters may add, drawn from the personas library, with an optional minimum and maximum per role and a cap across all roles. The public form adds the submitter automatically as the primary Speaker and lets them add co participants with name, email, role, company, job title and biography. Every participant and their role shows on the submissions list and the detail page.
 
+The library itself is at /admin/library, in three tabs. Fields defines the field definitions with type, options, help text and validation, and names the forms each one is used on before you delete it. Tags shows how many submissions carry each one. Personas defines the roles the participant picker offers. All three feed the form builder immediately, and destructive edits propagate: renaming a persona rewrites the participant rules on every form naming it, and deleting a tag pulls it out of the submissions and routing rules referencing it, since a JSON array has no foreign key to protect it.
+
 ### 2. Self-service speaker portal
 
 `/portal`.
