@@ -3,6 +3,7 @@ import { and, eq, inArray, asc, sql } from "drizzle-orm";
 import { getDb, cloudflareContext } from "~/db/client";
 import { applyRoutingRules, type RoutingEffect } from "~/lib/routing";
 import { sendSubmissionConfirmation } from "~/lib/notify";
+import { dayIsoIn, partsIn, safeZone, zoneAbbr } from "~/lib/tz";
 import {
   events,
   submissions,
@@ -55,8 +56,6 @@ function authorized(request: Request, env: Env) {
   return header === `Bearer ${key}`;
 }
 
-const EVENT_UTC_OFFSET = -7;
-
 /* The only status an unauthenticated caller may read. Everything else is
    either not yet decided or was rejected, and neither is anyone's
    business but the organiser's. */
@@ -73,11 +72,14 @@ const STATUSES = [
   "withdrawn",
 ];
 
-function localParts(ms: number) {
-  const d = new Date(ms + EVENT_UTC_OFFSET * 3_600_000);
+/* Local reading in the event zone. The ISO instants in the payload stay
+   UTC and authoritative; these are a convenience for consumers that want
+   to print a schedule without doing zone maths themselves. */
+function localParts(ms: number, zone: string) {
+  const p = partsIn(ms, zone);
   return {
-    date: d.toISOString().slice(0, 10),
-    time: d.toISOString().slice(11, 16),
+    date: dayIsoIn(ms, zone),
+    time: `${String(p.hour).padStart(2, "0")}:${String(p.minute).padStart(2, "0")}`,
   };
 }
 
@@ -353,11 +355,12 @@ async function handle(
 
   /* --- GET /events/:slug/agenda ------------------------------------ */
   if (sub === "agenda") {
+    const zone = safeZone(event.timezone);
     const sessions = await loadSessions(db, event.id);
     const byDay = new Map<string, unknown[]>();
     for (const s of sessions) {
       if (!s.startsAt) continue;
-      const { date, time } = localParts(new Date(s.startsAt).getTime());
+      const { date, time } = localParts(new Date(s.startsAt).getTime(), zone);
       const arr = byDay.get(date) ?? [];
       arr.push({ ...s, localTime: time });
       byDay.set(date, arr);
@@ -371,7 +374,8 @@ async function handle(
     return json(
       {
         data: {
-          timezone: event.timezone,
+          timezone: zone,
+          timezoneAbbreviation: zoneAbbr(Date.now(), zone),
           rooms: roomList,
           days: [...byDay.entries()]
             .sort(([a], [b]) => a.localeCompare(b))

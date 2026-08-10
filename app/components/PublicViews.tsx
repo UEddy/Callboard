@@ -1,3 +1,4 @@
+import { EventTime } from "~/components/EventTime";
 import {
   fmtDay,
   fmtTime,
@@ -21,6 +22,8 @@ import {
  * ------------------------------------------------------------------ */
 
 type Data = {
+  eventZone: string;
+  viewerZone: string | null;
   sessions: PublicSession[];
   speakers: (PublicSpeaker & { sessions: { ref: string; title: string }[] })[];
   rooms: { id: string; name: string; capacity: number | null }[];
@@ -62,7 +65,7 @@ function Speakers({ session }: { session: PublicSession }) {
 
 /* --- 1. Sessions list ------------------------------------------------ */
 
-export function SessionList({ sessions, fields }: Data) {
+export function SessionList({ sessions, fields, eventZone }: Data) {
   if (sessions.length === 0) return <Empty what="Sessions" />;
   return (
     <ul className="divide-y divide-line-soft overflow-hidden rounded-lg border border-line bg-surface">
@@ -93,7 +96,7 @@ export function SessionList({ sessions, fields }: Data) {
           <div className="mt-1.5 flex flex-wrap gap-x-3 text-[12px] text-dim tabular-nums">
             {s.startsAt !== null && (
               <span>
-                {fmtDay(localDay(s.startsAt))}, {fmtTime(s.startsAt)}
+                {fmtDay(localDay(s.startsAt, eventZone))}, {fmtTime(s.startsAt, eventZone)}
               </span>
             )}
             {fields.showRoom && s.roomName && <span>{s.roomName}</span>}
@@ -180,26 +183,26 @@ function Links({ links }: { links: Record<string, string> }) {
 
 const SLOT_MINUTES = 30;
 
-export function AgendaGrid({ sessions, rooms, days, fields }: Data) {
+export function AgendaGrid({ sessions, rooms, days, fields, eventZone }: Data) {
   const placed = sessions.filter((s) => s.startsAt !== null && s.roomId);
   if (placed.length === 0) return <Empty what="Scheduled sessions" />;
 
   const usedRooms = rooms.filter((r) => placed.some((s) => s.roomId === r.id));
   const dayList = days.length
     ? days
-    : [...new Set(placed.map((s) => localDay(s.startsAt!)))].sort();
+    : [...new Set(placed.map((s) => localDay(s.startsAt!, eventZone)))].sort();
 
   return (
     <div className="space-y-6">
       {dayList.map((day) => {
-        const onDay = placed.filter((s) => localDay(s.startsAt!) === day);
+        const onDay = placed.filter((s) => localDay(s.startsAt!, eventZone) === day);
         if (onDay.length === 0) return null;
 
-        const starts = onDay.map((s) => localParts(s.startsAt!));
+        const starts = onDay.map((s) => localParts(s.startsAt!, eventZone));
         const firstHour = Math.min(...starts.map((p) => p.hour));
         const lastEnd = Math.max(
           ...onDay.map((s) => {
-            const e = localParts(s.endsAt ?? s.startsAt! + 30 * 60_000);
+            const e = localParts(s.endsAt ?? s.startsAt! + 30 * 60_000, eventZone);
             return e.hour * 60 + e.minute;
           }),
         );
@@ -246,14 +249,15 @@ export function AgendaGrid({ sessions, rooms, days, fields }: Data) {
                             (s) => s.roomId === room.id,
                           );
                           const starting = inRoom.find((s) => {
-                            const p = localParts(s.startsAt!);
+                            const p = localParts(s.startsAt!, eventZone);
                             return p.hour * 60 + p.minute === slotMin;
                           });
                           const covered = inRoom.find((s) => {
-                            const p = localParts(s.startsAt!);
+                            const p = localParts(s.startsAt!, eventZone);
                             const st = p.hour * 60 + p.minute;
                             const e = localParts(
                               s.endsAt ?? s.startsAt! + 30 * 60_000,
+                              eventZone,
                             );
                             const en = e.hour * 60 + e.minute;
                             return st < slotMin && en > slotMin;
@@ -264,6 +268,7 @@ export function AgendaGrid({ sessions, rooms, days, fields }: Data) {
                             const e = localParts(
                               starting.endsAt ??
                                 starting.startsAt! + 30 * 60_000,
+                              eventZone,
                             );
                             const span = Math.max(
                               1,
@@ -325,19 +330,19 @@ export function AgendaGrid({ sessions, rooms, days, fields }: Data) {
 
 /* --- 4. Schedule itinerary -------------------------------------------- */
 
-export function ScheduleItinerary({ sessions, days, fields }: Data) {
+export function ScheduleItinerary({ sessions, days, fields, eventZone, viewerZone }: Data) {
   const timed = sessions.filter((s) => s.startsAt !== null);
   if (timed.length === 0) return <Empty what="Scheduled sessions" />;
 
   const dayList = days.length
     ? days
-    : [...new Set(timed.map((s) => localDay(s.startsAt!)))].sort();
+    : [...new Set(timed.map((s) => localDay(s.startsAt!, eventZone)))].sort();
 
   return (
     <div className="space-y-6">
       {dayList.map((day) => {
         const onDay = timed
-          .filter((s) => localDay(s.startsAt!) === day)
+          .filter((s) => localDay(s.startsAt!, eventZone) === day)
           .sort((a, b) => a.startsAt! - b.startsAt!);
         if (onDay.length === 0) return null;
 
@@ -353,7 +358,7 @@ export function ScheduleItinerary({ sessions, days, fields }: Data) {
                   className="flex gap-3 border-b border-line-soft p-3 last:border-0"
                 >
                   <div className="w-20 shrink-0 pt-0.5 text-[12px] tabular-nums text-dim">
-                    {fmtTime(s.startsAt)}
+                    {fmtTime(s.startsAt, eventZone)}
                   </div>
                   <div
                     className="cb-bar w-1 shrink-0 rounded"

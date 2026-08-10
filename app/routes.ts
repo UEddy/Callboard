@@ -20,5 +20,6 @@ export default [
     route("agenda", "routes/admin.agenda.tsx"),
     route("integrations", "routes/admin.integrations.tsx"),
     route("embeds", "routes/admin.embeds.tsx"),
+    route("settings", "routes/admin.settings.tsx"),
   ]),
 ] satisfies RouteConfig;

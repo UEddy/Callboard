@@ -26,6 +26,9 @@ import {
 import { readPortal, writePortal } from "~/lib/session";
 import { render, sendEmail } from "~/lib/email";
 import { ThemeToggle } from "~/components/ThemeToggle";
+import { EventTime } from "~/components/EventTime";
+import { fmtDateIn, safeZone } from "~/lib/tz";
+import { readViewerZone } from "~/lib/viewer-tz";
 import {
   acceptAttribute,
   buildKey,
@@ -36,8 +39,6 @@ import {
   validateUpload,
   type UploadKind,
 } from "~/lib/uploads";
-
-const EVENT_UTC_OFFSET = -7;
 
 const LINK_TTL_MINUTES = 30;
 
@@ -62,6 +63,9 @@ export async function loader({ context, request }: LoaderFunctionArgs) {
     where: eq(events.id, DEMO_EVENT_ID),
   });
 
+  const eventZone = safeZone(event?.timezone);
+  const viewerZone = await readViewerZone(request);
+
   /* --- Magic link arrival: verify, burn the token, set the cookie --- */
   if (token) {
     const row = await db.query.authTokens.findFirst({
@@ -81,19 +85,19 @@ export async function loader({ context, request }: LoaderFunctionArgs) {
         },
       });
     }
-    return { state: "expired" as const, event, ms: Date.now() - started };
+    return { state: "expired" as const, event, eventZone, viewerZone, ms: Date.now() - started };
   }
 
   const session = await readPortal(request);
   if (!session.participantId) {
-    return { state: "login" as const, event, ms: Date.now() - started };
+    return { state: "login" as const, event, eventZone, viewerZone, ms: Date.now() - started };
   }
 
   const me = await db.query.participants.findFirst({
     where: eq(participants.id, session.participantId),
   });
   if (!me) {
-    return { state: "login" as const, event, ms: Date.now() - started };
+    return { state: "login" as const, event, eventZone, viewerZone, ms: Date.now() - started };
   }
 
   const mine = await db
@@ -154,6 +158,8 @@ export async function loader({ context, request }: LoaderFunctionArgs) {
   return {
     state: "in" as const,
     event,
+    eventZone,
+    viewerZone,
     me,
     mine,
     accepted,
@@ -493,14 +499,7 @@ function UploadField({
   );
 }
 
-function fmtSession(ms: number | null) {
-  if (!ms) return null;
-  const d = new Date(ms + EVENT_UTC_OFFSET * 3_600_000);
-  const h = d.getUTCHours();
-  const m = d.getUTCMinutes();
-  const hh = h % 12 === 0 ? 12 : h % 12;
-  return `${d.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", timeZone: "UTC" })} at ${hh}:${String(m).padStart(2, "0")} ${h < 12 ? "AM" : "PM"} PT`;
-}
+
 
 const STATUS_COPY: Record<string, { text: string; cls: string }> = {
   accepted: {
@@ -967,7 +966,16 @@ export default function Portal() {
                     <div className="mt-1.5 rounded-md bg-subtle px-2 py-1.5 text-[12px] text-body">
                       {s.startsAt ? (
                         <>
-                          {fmtSession(new Date(s.startsAt).getTime())}
+                          {fmtDateIn(
+                            new Date(s.startsAt).getTime(),
+                            data.eventZone,
+                          )}{" "}
+                          at{" "}
+                          <EventTime
+                            utcMs={new Date(s.startsAt).getTime()}
+                            eventZone={data.eventZone}
+                            viewerZone={data.viewerZone}
+                          />
                           {s.roomName ? ` in ${s.roomName}` : " (room to be confirmed)"}
                         </>
                       ) : (

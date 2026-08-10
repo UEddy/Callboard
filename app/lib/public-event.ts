@@ -18,6 +18,7 @@ import {
   tracks,
 } from "~/db/schema";
 import type { getDb } from "~/db/client";
+import { dayIsoIn, partsIn, fmtTimeIn, safeZone } from "~/lib/tz";
 
 type Db = ReturnType<typeof getDb>;
 
@@ -232,17 +233,18 @@ export async function loadPublicEvent(
     );
   }
 
+  const zone = safeZone(event.timezone);
   const days = [
     ...new Set(
       sessions
         .filter((s) => s.startsAt !== null)
-        .map((s) => localDay(s.startsAt!)),
+        .map((s) => localDay(s.startsAt!, zone)),
     ),
   ].sort();
 
   if (filters.day) {
     sessions = sessions.filter(
-      (s) => s.startsAt !== null && localDay(s.startsAt) === filters.day,
+      (s) => s.startsAt !== null && localDay(s.startsAt, zone) === filters.day,
     );
   }
 
@@ -274,6 +276,7 @@ export async function loadPublicEvent(
       description: event.description,
       startsAt: event.startsAt ? new Date(event.startsAt).getTime() : null,
       endsAt: event.endsAt ? new Date(event.endsAt).getTime() : null,
+      timezone: zone,
     },
     tracks: trackList,
     rooms: roomList,
@@ -284,25 +287,21 @@ export async function loadPublicEvent(
   };
 }
 
-/* The event runs on a fixed offset, the same assumption the agenda
-   builder makes. Shared here so the public grid and the admin grid put a
-   session in the same slot. */
-export const EVENT_UTC_OFFSET = -7;
-
-export function localDay(ms: number) {
-  return new Date(ms + EVENT_UTC_OFFSET * 3_600_000).toISOString().slice(0, 10);
+/* Display helpers now take the event zone explicitly, so the public
+   grid and the admin grid put a session in the same slot because they
+   are reading the same stored zone rather than sharing a guess. */
+export function localDay(ms: number, timeZone: string) {
+  return dayIsoIn(ms, timeZone);
 }
 
-export function localParts(ms: number) {
-  const d = new Date(ms + EVENT_UTC_OFFSET * 3_600_000);
-  return { hour: d.getUTCHours(), minute: d.getUTCMinutes() };
+export function localParts(ms: number, timeZone: string) {
+  const p = partsIn(ms, timeZone);
+  return { hour: p.hour, minute: p.minute };
 }
 
-export function fmtTime(ms: number | null) {
+export function fmtTime(ms: number | null, timeZone: string) {
   if (ms === null) return "Time to be confirmed";
-  const { hour, minute } = localParts(ms);
-  const h = hour % 12 === 0 ? 12 : hour % 12;
-  return `${h}:${String(minute).padStart(2, "0")} ${hour < 12 ? "AM" : "PM"}`;
+  return fmtTimeIn(ms, timeZone);
 }
 
 export function fmtDay(dayIso: string) {

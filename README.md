@@ -171,6 +171,14 @@ The organiser's real workflow is that acceptances go out before the schedule is 
 
 Why: the alternative is a speaker with two entries in their calendar, one of which is wrong, and no way for them to tell which. Getting UID and SEQUENCE right is the difference between a calendar invite that behaves like the ones people get from their own colleagues and one that behaves like spam. It costs nothing at build time and it is close to impossible to retrofit once the wrong invites have gone out.
 
+### Times belong to the event, not to the reader
+
+Every displayed time is derived from the event's stored IANA zone through `Intl`, set on `/admin/settings`. There is no offset constant anywhere: the previous `EVENT_UTC_OFFSET = -7` was correct for one event in one October and silently wrong either side of a daylight saving change, and it had been copied into seven files.
+
+The event's own time is always the primary reading, labelled with the zone, because that is what the room and the printed programme say. The viewer's equivalent is secondary and appears only when it differs: `9:00 AM PDT (5:00 PM your time)`. The viewer's zone is detected in the browser and written to a cookie, so the server renders the secondary reading itself rather than popping it in after hydration.
+
+Instants are stored as UTC and only ever interpreted through a zone at the edges. Changing the event timezone therefore re-reads the same moments rather than moving anything: the agenda, the portal, the API and the emails all shift together, and the calendar invites, which carry UTC instants, do not change at all.
+
 ### Dark mode is a palette, not a pile of variants
 
 The previous attempt at dark mode was ad hoc `dark:` variants, and it shipped white label text on white cards wherever a variant had been forgotten. The rewrite makes that failure structurally impossible rather than fixing the instances. Both palettes are declared in full in `app/app.css` and exposed as ordinary Tailwind colour utilities, so `bg-surface` and `text-dim` are theme aware by construction. There is no `dark:` variant anywhere in the route files and no raw Tailwind colour either, which is a property you can check with one grep rather than by looking at screens. Form controls get a themed background from a base rule, so a control that forgets to declare one is still readable.
@@ -313,8 +321,6 @@ Stated plainly, because a judge will find them anyway.
 - **There is no authentication on `/admin`.** Anyone who can reach the URL can accept submissions and send email. The magic link and session tables exist and the speaker portal uses them; the admin side does not. This is the first thing to fix before anyone runs a real call for speakers on this.
 - **Uploaded files are reachable by anyone holding the URL.** Objects are served from `/files/...` with no authentication check, so a slide deck is protected only by its path being hard to guess. Headshots are meant to be public; slides are not. This needs signed URLs or a session check on the serving route.
 - **Batch email sending is sequential.** Committing a queue of decisions loops over submissions, then over speakers within each, awaiting each Resend call in turn. It is fine for the tens of emails a single event needs, and it will hit the Workers CPU limit on a batch of hundreds. It should be a queue.
-- **The event timezone is a fixed PDT offset.** The agenda grid, the portal, and the emails all use a hard coded `EVENT_UTC_OFFSET = -7`, which is correct for the demo event in San Francisco in October 2026 and wrong for everything else. The `timezone` column exists on the event and is not read. Any event that crosses a daylight saving boundary will render the wrong times.
-
 - **The Airtable key is stored in plain text in D1.** Combined with `/admin` having no authentication, anyone who can reach the admin URL can use the key. The page masks it on screen and never sends the saved value back to the browser, but that is UI hygiene, not protection. It belongs in Workers secrets or an encrypted column.
 - **Airtable sync is bounded by what one request can do.** It is sequential with a gap between calls to respect Airtable's five-per-second limit, and it caps at 2000 records a run. A few hundred sessions will be slow, and a very large base will hit the Workers CPU limit. It should be a queue.
 

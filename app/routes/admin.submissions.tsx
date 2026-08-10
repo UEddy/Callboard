@@ -2,6 +2,9 @@ import { Form, Link, useLoaderData, useSearchParams } from "react-router";
 import type { LoaderFunctionArgs } from "react-router";
 import { and, eq, inArray, like, desc, sql } from "drizzle-orm";
 import { getDb, DEMO_EVENT_ID } from "~/db/client";
+import { events } from "~/db/schema";
+import { fmtDateIn, dualTimeText, safeZone } from "~/lib/tz";
+import { readViewerZone } from "~/lib/viewer-tz";
 import {
   submissions,
   submissionParticipants,
@@ -140,6 +143,10 @@ export async function loader({ context, request }: LoaderFunctionArgs) {
     list.sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary));
   }
 
+  const ev = await db.query.events.findFirst({ where: eq(events.id, DEMO_EVENT_ID) });
+  const eventZone = safeZone(ev?.timezone);
+  const viewerZone = await readViewerZone(request);
+
   const trackList = await db
     .select({ id: tracks.id, name: tracks.name })
     .from(tracks)
@@ -155,6 +162,8 @@ export async function loader({ context, request }: LoaderFunctionArgs) {
 
   return {
     rows,
+    eventZone,
+    viewerZone,
     speakersBySubmission,
     trackList,
     tabCounts,
@@ -163,6 +172,10 @@ export async function loader({ context, request }: LoaderFunctionArgs) {
     trackFilter,
     ms: Date.now() - started,
   };
+}
+
+function exact(ms: number, zone: string, viewer: string | null) {
+  return `${fmtDateIn(ms, zone, { weekday: "long", month: "long", day: "numeric", year: "numeric" })} at ${dualTimeText(ms, zone, viewer)}`;
 }
 
 function timeAgo(d: Date | null) {
@@ -177,6 +190,8 @@ function timeAgo(d: Date | null) {
 export default function Submissions() {
   const {
     rows,
+    eventZone,
+    viewerZone,
     speakersBySubmission,
     trackList,
     tabCounts,
@@ -381,7 +396,10 @@ export default function Submissions() {
                       </td>
                       <td className="whitespace-nowrap px-4 py-2.5">
                         {r.notifiedAt ? (
-                          <span className="text-dim tabular-nums">
+                          <span
+                            className="text-dim tabular-nums"
+                            title={exact(new Date(r.notifiedAt).getTime(), eventZone, viewerZone)}
+                          >
                             {timeAgo(new Date(r.notifiedAt))}
                           </span>
                         ) : decidedNotNotified ? (
@@ -397,7 +415,9 @@ export default function Submissions() {
                       </td>
                       <td className="whitespace-nowrap px-4 py-2.5 text-dim tabular-nums">
                         {r.submittedAt ? (
-                          timeAgo(new Date(r.submittedAt))
+                          <span title={exact(new Date(r.submittedAt).getTime(), eventZone, viewerZone)}>
+                            {timeAgo(new Date(r.submittedAt))}
+                          </span>
                         ) : (
                           <span className="text-faint">Not submitted</span>
                         )}

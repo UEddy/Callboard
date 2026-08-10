@@ -23,10 +23,13 @@ import {
   utcMsToLocalParts,
   type Scheduled,
 } from "~/lib/schedule";
+import { safeZone } from "~/lib/tz";
+import { readViewerZone } from "~/lib/viewer-tz";
+import { EventTime } from "~/components/EventTime";
 
 /* --- Loader -------------------------------------------------------- */
 
-export async function loader({ context }: LoaderFunctionArgs) {
+export async function loader({ context, request }: LoaderFunctionArgs) {
   const started = Date.now();
   const db = getDb(context);
 
@@ -138,12 +141,15 @@ export async function loader({ context }: LoaderFunctionArgs) {
     }
   }
 
-  const dayIsos = eventDays(event?.startsAt ?? null, event?.endsAt ?? null);
+  const zone = safeZone(event?.timezone);
+  const dayIsos = eventDays(event?.startsAt ?? null, event?.endsAt ?? null, zone);
 
-  const conflicts = detectConflicts(scheduled, dayIsos);
+  const conflicts = detectConflicts(scheduled, dayIsos, zone);
 
   return {
     event,
+    eventZone: zone,
+    viewerZone: await readViewerZone(request),
     roomList,
     scheduled,
     unscheduled,
@@ -170,13 +176,17 @@ export async function action({ context, request }: ActionFunctionArgs) {
   }
 
   if (intent === "place") {
+    const ev = await db.query.events.findFirst({
+      where: eq(events.id, DEMO_EVENT_ID),
+    });
+    const zone = safeZone(ev?.timezone);
     const roomId = String(fd.get("roomId"));
     const dayIso = String(fd.get("dayIso"));
     const hour = Number(fd.get("hour"));
     const minute = Number(fd.get("minute"));
     const format = String(fd.get("format") ?? "");
 
-    const startMs = slotToUtcMs(dayIso, hour, minute);
+    const startMs = slotToUtcMs(dayIso, hour, minute, zone);
     const endMs = startMs + durationFor(format || null) * 60_000;
 
     await db
@@ -198,8 +208,17 @@ export async function action({ context, request }: ActionFunctionArgs) {
 /* --- UI ------------------------------------------------------------ */
 
 export default function Agenda() {
-  const { event, roomList, scheduled, unscheduled, dayIsos, conflicts, ms } =
-    useLoaderData<typeof loader>();
+  const {
+    event,
+    eventZone,
+    viewerZone,
+    roomList,
+    scheduled,
+    unscheduled,
+    dayIsos,
+    conflicts,
+    ms,
+  } = useLoaderData<typeof loader>();
   const [params, setParams] = useSearchParams();
   const fetcher = useFetcher();
 
@@ -215,7 +234,7 @@ export default function Agenda() {
   }
 
   const onDay = scheduled.filter(
-    (s) => utcMsToLocalParts(s.startMs).dayIso === day,
+    (s) => utcMsToLocalParts(s.startMs, eventZone).dayIso === day,
   );
 
   const place = (
@@ -406,7 +425,7 @@ export default function Agenda() {
                 </thead>
                 <tbody>
                   {slots.map(({ hour, minute }) => {
-                    const slotMs = slotToUtcMs(day, hour, minute);
+                    const slotMs = slotToUtcMs(day, hour, minute, eventZone);
                     return (
                       <tr key={`${hour}:${minute}`}>
                         <td className="border-b border-r border-line-soft px-2 py-1 align-top text-[11px] tabular-nums text-faint">
@@ -552,7 +571,7 @@ export default function Agenda() {
                 [...onDay]
                   .sort((a, b) => a.startMs - b.startMs)
                   .map((s) => {
-                    const t = utcMsToLocalParts(s.startMs);
+                    const t = utcMsToLocalParts(s.startMs, eventZone);
                     return (
                       <div
                         key={s.id}
@@ -600,7 +619,7 @@ export default function Agenda() {
                       .filter((s) => (s.trackName ?? "Unassigned") === name)
                       .sort((a, b) => a.startMs - b.startMs)
                       .map((s) => {
-                        const t = utcMsToLocalParts(s.startMs);
+                        const t = utcMsToLocalParts(s.startMs, eventZone);
                         return (
                           <div
                             key={s.id}

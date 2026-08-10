@@ -18,9 +18,9 @@ import {
   detectConflicts,
   durationFor,
   eventDays,
-  EVENT_UTC_OFFSET,
   type Scheduled,
 } from "~/lib/schedule";
+import { dayIsoIn, safeZone } from "~/lib/tz";
 
 /* ------------------------------------------------------------------ *
  * The dashboard.
@@ -38,10 +38,8 @@ import {
 const RECENT_LIMIT = 8;
 
 /* Today, in the event's own timezone rather than the server's. */
-function localToday() {
-  return new Date(Date.now() + EVENT_UTC_OFFSET * 3_600_000)
-    .toISOString()
-    .slice(0, 10);
+function localToday(zone: string) {
+  return dayIsoIn(Date.now(), zone);
 }
 
 function daysBetween(fromIso: string, toIso: string) {
@@ -192,7 +190,8 @@ export async function loader({ context }: LoaderFunctionArgs) {
 
   const conflicts = detectConflicts(
     scheduled,
-    eventDays(event?.startsAt ?? null, event?.endsAt ?? null),
+    eventDays(event?.startsAt ?? null, event?.endsAt ?? null, safeZone(event?.timezone)),
+    safeZone(event?.timezone),
   );
 
   /* --- remaining nudge inputs --------------------------------------- */
@@ -265,9 +264,10 @@ export async function loader({ context }: LoaderFunctionArgs) {
       ),
     }));
 
-  const today = localToday();
+  const zone = safeZone(event?.timezone);
+  const today = localToday(zone);
   const eventStartDay = event?.startsAt
-    ? new Date(event.startsAt).toISOString().slice(0, 10)
+    ? dayIsoIn(new Date(event.startsAt).getTime(), zone)
     : null;
 
   return {

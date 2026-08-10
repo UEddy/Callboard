@@ -36,6 +36,13 @@
       "when": 1786391492656,
       "tag": "0004_lying_angel",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1786395030483,
+      "tag": "0005_unique_sentinel",
+      "breakpoints": true
     }
   ]
 }

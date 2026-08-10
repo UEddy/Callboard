@@ -18,7 +18,12 @@ export const events = sqliteTable("events", {
   description: text("description"),
   startsAt: integer("starts_at", { mode: "timestamp" }),
   endsAt: integer("ends_at", { mode: "timestamp" }),
+  // IANA zone. Every displayed time is derived from this, so it is the
+  // one field that must never be a guess.
   timezone: text("timezone").notNull().default("America/Los_Angeles"),
+  eventType: text("event_type"),
+  websiteUrl: text("website_url"),
+  location: text("location"),
   logoUrl: text("logo_url"),
   backgroundUrl: text("background_url"),
   submissionLimitPerUser: integer("submission_limit_per_user").default(3),

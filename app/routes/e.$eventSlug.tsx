@@ -13,6 +13,7 @@ import {
 import { renderView } from "~/components/PublicViews";
 import { embeds } from "~/db/schema";
 import { eq } from "drizzle-orm";
+import { readViewerZone } from "~/lib/viewer-tz";
 
 /* ------------------------------------------------------------------ *
  * The public display layer.
@@ -116,6 +117,8 @@ export async function loader({ context, params, request }: LoaderFunctionArgs) {
 
   return {
     retired: false as const,
+    viewerZone: await readViewerZone(request),
+    eventZone: loaded.event.timezone,
     ...loaded,
     view,
     fields,
@@ -157,6 +160,8 @@ export default function PublicEvent() {
     rooms,
     days,
     fields,
+    eventZone: data.eventZone,
+    viewerZone: data.viewerZone,
   });
 
   /* Embedded: just the content. No header, no switcher, no padding that

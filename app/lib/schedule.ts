@@ -7,10 +7,8 @@
  * producer stops believing either number.
  * ------------------------------------------------------------------ */
 
-/* The event runs in America/Los_Angeles, which is PDT (UTC-7) across all
-   three days in October 2026. A fixed offset keeps the grid honest
-   without pulling in a timezone library. */
-export const EVENT_UTC_OFFSET = -7;
+import { dayIsoToUtc, partsIn, dayIsoIn } from "./tz";
+
 export const DAY_START_HOUR = 8;
 export const DAY_END_HOUR = 18;
 export const SLOT_MINUTES = 30;
@@ -26,18 +24,18 @@ export function durationFor(format: string | null) {
   return (format && DURATION_BY_FORMAT[format]) || 30;
 }
 
-export function slotToUtcMs(dayIso: string, hour: number, minute: number) {
-  const [y, m, d] = dayIso.split("-").map(Number);
-  return Date.UTC(y, m - 1, d, hour - EVENT_UTC_OFFSET, minute);
+export function slotToUtcMs(
+  dayIso: string,
+  hour: number,
+  minute: number,
+  timeZone: string,
+) {
+  return dayIsoToUtc(dayIso, hour, minute, timeZone);
 }
 
-export function utcMsToLocalParts(ms: number) {
-  const shifted = new Date(ms + EVENT_UTC_OFFSET * 3_600_000);
-  return {
-    dayIso: shifted.toISOString().slice(0, 10),
-    hour: shifted.getUTCHours(),
-    minute: shifted.getUTCMinutes(),
-  };
+export function utcMsToLocalParts(ms: number, timeZone: string) {
+  const p = partsIn(ms, timeZone);
+  return { dayIso: dayIsoIn(ms, timeZone), hour: p.hour, minute: p.minute };
 }
 
 export function fmtTime(hour: number, minute: number) {
@@ -71,6 +69,7 @@ export type Conflict = {
 export function detectConflicts(
   list: Scheduled[],
   dayIsos: string[],
+  timeZone: string,
 ): Conflict[] {
   const out: Conflict[] = [];
   const overlaps = (a: Scheduled, b: Scheduled) =>
@@ -112,8 +111,8 @@ export function detectConflicts(
   }
 
   for (const s of list) {
-    const start = utcMsToLocalParts(s.startMs);
-    const end = utcMsToLocalParts(s.endMs);
+    const start = utcMsToLocalParts(s.startMs, timeZone);
+    const end = utcMsToLocalParts(s.endMs, timeZone);
     const outsideDay = !dayIsos.includes(start.dayIso);
     const tooEarly = start.hour < DAY_START_HOUR;
     const tooLate =
@@ -134,17 +133,19 @@ export function detectConflicts(
 export function eventDays(
   startsAt: Date | number | null,
   endsAt: Date | number | null,
+  timeZone: string,
 ): string[] {
   if (!startsAt || !endsAt) return [];
   const out: string[] = [];
-  const start = new Date(startsAt);
-  const end = new Date(endsAt);
-  for (
-    let d = new Date(start);
-    d.getTime() <= end.getTime();
-    d.setUTCDate(d.getUTCDate() + 1)
-  ) {
-    out.push(d.toISOString().slice(0, 10));
+  const endDay = dayIsoIn(new Date(endsAt).getTime(), timeZone);
+  let cursor = new Date(startsAt).getTime();
+  // Step a day at a time in the zone, so a DST day of 23 or 25 hours
+  // still produces exactly one calendar entry.
+  for (let guard = 0; guard < 400; guard++) {
+    const day = dayIsoIn(cursor, timeZone);
+    out.push(day);
+    if (day >= endDay) break;
+    cursor = dayIsoToUtc(day, 12, 0, timeZone) + 24 * 3_600_000;
   }
   return out;
 }

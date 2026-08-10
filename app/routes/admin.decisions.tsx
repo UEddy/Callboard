@@ -15,15 +15,13 @@ import {
   taskAssignments,
 } from "~/db/schema";
 import { buildIcs, sendEmail, render, invitationUid } from "~/lib/email";
+import { fmtWhenIn, safeZone } from "~/lib/tz";
 
-const EVENT_UTC_OFFSET = -7;
-
-function fmtWhen(ms: number | null) {
-  if (!ms) return "to be confirmed";
-  const d = new Date(ms + EVENT_UTC_OFFSET * 3_600_000);
-  const h = d.getUTCHours();
-  const hh = h % 12 === 0 ? 12 : h % 12;
-  return `${d.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", timeZone: "UTC" })} at ${hh}:${String(d.getUTCMinutes()).padStart(2, "0")} ${h < 12 ? "AM" : "PM"} PT`;
+/* The email says the event's time, labelled with the real zone. No
+   viewer zone here: an inbox has no reliable one, and a speaker reading
+   on a plane should see the time the room runs on. */
+function fmtWhen(ms: number | null, zone: string) {
+  return fmtWhenIn(ms, zone);
 }
 
 export async function loader({ context }: LoaderFunctionArgs) {
@@ -217,6 +215,7 @@ export async function action({ context, request }: ActionFunctionArgs) {
           "submission.ref": sub.ref,
           "submission.startsAt": fmtWhen(
             sub.startsAt ? new Date(sub.startsAt).getTime() : null,
+            safeZone(event.timezone),
           ),
           "room.name": sub.roomName ?? "",
           portalUrl: `${new URL(request.url).origin}/portal`,

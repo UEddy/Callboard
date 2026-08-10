@@ -12,6 +12,8 @@ import type { LoaderFunctionArgs } from "react-router";
 import type { Route } from "./+types/root";
 import "./app.css";
 import { readTheme, themeAttribute, type Theme } from "./lib/theme";
+import { readViewerZone } from "./lib/viewer-tz";
+import { ViewerZoneProbe } from "./components/EventTime";
 
 export const links: Route.LinksFunction = () => [
   { rel: "preconnect", href: "https://fonts.googleapis.com" },
@@ -30,7 +32,10 @@ export const links: Route.LinksFunction = () => [
    palette is in the markup itself. No inline script, no post-hydration
    correction, nothing to flash. */
 export async function loader({ request }: LoaderFunctionArgs) {
-  return { theme: await readTheme(request) };
+  return {
+    theme: await readTheme(request),
+    viewerZone: await readViewerZone(request),
+  };
 }
 
 export function Layout({ children }: { children: React.ReactNode }) {
@@ -62,7 +67,13 @@ export function Layout({ children }: { children: React.ReactNode }) {
 }
 
 export default function App() {
-  return <Outlet />;
+  const data = useRouteLoaderData<typeof loader>("root");
+  return (
+    <>
+      <ViewerZoneProbe current={data?.viewerZone ?? null} />
+      <Outlet />
+    </>
+  );
 }
 
 export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
