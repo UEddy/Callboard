@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Form, useLoaderData, useNavigation } from "react-router";
+import { Form, useActionData, useLoaderData, useNavigation } from "react-router";
 import type { LoaderFunctionArgs, ActionFunctionArgs } from "react-router";
 import { redirect } from "react-router";
 import { and, eq, asc, sql } from "drizzle-orm";
@@ -16,6 +16,14 @@ import {
 } from "~/db/schema";
 import { readSession, writeSession } from "~/lib/session";
 import { applyRoutingRules } from "~/lib/routing";
+import {
+  addableRoles,
+  describeRoles,
+  parseRoles,
+  plural,
+  validateParticipants,
+  type ParticipantIssue,
+} from "~/lib/participants";
 import { sendSubmissionConfirmation } from "~/lib/notify";
 
 const STEPS = ["welcome", "account", "proposal", "speaker", "review"] as const;
@@ -104,6 +112,35 @@ export async function loader({ context, request, params }: LoaderFunctionArgs) {
     .where(eq(tracks.eventId, form.eventId))
     .orderBy(tracks.sortOrder);
 
+  /* Everyone currently on this submission, primary first. */
+  const roster = session.submissionId
+    ? await db
+        .select({
+          linkId: submissionParticipants.id,
+          role: submissionParticipants.role,
+          isPrimary: submissionParticipants.isPrimary,
+          sortOrder: submissionParticipants.sortOrder,
+          id: participants.id,
+          firstName: participants.firstName,
+          lastName: participants.lastName,
+          email: participants.email,
+          company: participants.company,
+          jobTitle: participants.jobTitle,
+          bio: participants.bio,
+        })
+        .from(submissionParticipants)
+        .innerJoin(
+          participants,
+          eq(submissionParticipants.participantId, participants.id),
+        )
+        .where(eq(submissionParticipants.submissionId, session.submissionId))
+        .orderBy(asc(submissionParticipants.sortOrder))
+    : [];
+
+  const roles = parseRoles(form.participantRoles);
+  const counts: Record<string, number> = {};
+  for (const r of roster) counts[r.role] = (counts[r.role] ?? 0) + 1;
+
   return {
     form,
     event,
@@ -114,6 +151,12 @@ export async function loader({ context, request, params }: LoaderFunctionArgs) {
     draft,
     me,
     existingCount,
+    roster: [...roster].sort(
+      (a, b) => Number(b.isPrimary) - Number(a.isPrimary) || a.sortOrder - b.sortOrder,
+    ),
+    roles,
+    participantCap: form.participantCap,
+    addable: addableRoles(roles, counts, form.participantCap, roster.length),
     ms: Date.now() - started,
   };
 }
@@ -267,18 +310,140 @@ export async function action({ context, request, params }: ActionFunctionArgs) {
   }
 
   if (step === "speaker") {
-    await db
-      .update(participants)
-      .set({
-        firstName: String(fd.get("first_name") ?? "") || null,
-        lastName: String(fd.get("last_name") ?? "") || null,
-        company: String(fd.get("company") ?? "") || null,
-        jobTitle: String(fd.get("job_title") ?? "") || null,
-        phone: String(fd.get("phone") ?? "") || null,
-        bio: String(fd.get("bio") ?? "") || null,
-        updatedAt: new Date(),
+    const pIntent = String(fd.get("pIntent") ?? "continue");
+    const rules = parseRoles(form.participantRoles);
+
+    const roster = await db
+      .select({
+        linkId: submissionParticipants.id,
+        participantId: submissionParticipants.participantId,
+        role: submissionParticipants.role,
+        isPrimary: submissionParticipants.isPrimary,
       })
-      .where(eq(participants.id, session.participantId!));
+      .from(submissionParticipants)
+      .where(eq(submissionParticipants.submissionId, session.submissionId));
+
+    const counts: Record<string, number> = {};
+    for (const r of roster) counts[r.role] = (counts[r.role] ?? 0) + 1;
+
+    /* --- the submitter's own details -------------------------------- */
+    if (pIntent === "save_self") {
+      await db
+        .update(participants)
+        .set({
+          firstName: String(fd.get("first_name") ?? "") || null,
+          lastName: String(fd.get("last_name") ?? "") || null,
+          company: String(fd.get("company") ?? "") || null,
+          jobTitle: String(fd.get("job_title") ?? "") || null,
+          phone: String(fd.get("phone") ?? "") || null,
+          bio: String(fd.get("bio") ?? "") || null,
+          updatedAt: new Date(),
+        })
+        .where(eq(participants.id, session.participantId!));
+      return { savedSelf: true };
+    }
+
+    /* --- add a co participant --------------------------------------- */
+    if (pIntent === "add") {
+      const email = String(fd.get("email") ?? "").trim().toLowerCase();
+      const firstName = String(fd.get("first_name") ?? "").trim();
+      const lastName = String(fd.get("last_name") ?? "").trim();
+      const role = String(fd.get("role") ?? "").trim();
+
+      if (!email) return { addError: "Enter an email address for this person." };
+      if (!firstName)
+        return { addError: "Enter a first name for this person." };
+      if (!rules.some((r) => r.role === role))
+        return { addError: "Choose a role for this person." };
+
+      const rule = rules.find((r) => r.role === role)!;
+      const have = counts[role] ?? 0;
+      if (rule.max !== null && have >= rule.max) {
+        return {
+          addError: `This form allows at most ${rule.max} ${plural(role, rule.max)}, and you already have ${have}.`,
+        };
+      }
+      if (
+        form.participantCap !== null &&
+        roster.length >= form.participantCap
+      ) {
+        return {
+          addError: `This form allows at most ${form.participantCap} people in total, and you already have ${roster.length}.`,
+        };
+      }
+
+      // Reuse the person if this event already knows them, so the same
+      // human is not duplicated across submissions.
+      let person = await db.query.participants.findFirst({
+        where: and(
+          eq(participants.eventId, form.eventId),
+          eq(participants.email, email),
+        ),
+      });
+      if (!person) {
+        const id = crypto.randomUUID();
+        await db.insert(participants).values({
+          id,
+          eventId: form.eventId,
+          email,
+          firstName: firstName || null,
+          lastName: lastName || null,
+          company: String(fd.get("company") ?? "").trim() || null,
+          jobTitle: String(fd.get("job_title") ?? "").trim() || null,
+          bio: String(fd.get("bio") ?? "").trim() || null,
+        });
+        person = { id } as never;
+      } else {
+        // Fill in blanks without clobbering what they already have.
+        await db
+          .update(participants)
+          .set({
+            firstName: person.firstName ?? firstName ?? null,
+            lastName: person.lastName ?? lastName ?? null,
+            company:
+              person.company ?? String(fd.get("company") ?? "").trim() ?? null,
+            jobTitle:
+              person.jobTitle ??
+              String(fd.get("job_title") ?? "").trim() ??
+              null,
+            bio: person.bio ?? String(fd.get("bio") ?? "").trim() ?? null,
+            updatedAt: new Date(),
+          })
+          .where(eq(participants.id, person.id));
+      }
+
+      const personId = (person as { id: string }).id;
+      if (roster.some((r) => r.participantId === personId)) {
+        return { addError: `${email} is already on this submission.` };
+      }
+
+      await db.insert(submissionParticipants).values({
+        submissionId: session.submissionId,
+        participantId: personId,
+        role,
+        isPrimary: false,
+        sortOrder: roster.length,
+      });
+      return { added: true };
+    }
+
+    /* --- remove a co participant ------------------------------------ */
+    if (pIntent === "remove") {
+      const linkId = String(fd.get("linkId") ?? "");
+      const target = roster.find((r) => r.linkId === linkId);
+      // The submitter cannot remove themselves: they own the submission.
+      if (target && !target.isPrimary) {
+        await db
+          .delete(submissionParticipants)
+          .where(eq(submissionParticipants.id, linkId));
+      }
+      return { removed: true };
+    }
+
+    /* --- continue: enforce the configured minimums ------------------- */
+    const issues = validateParticipants(rules, form.participantCap, counts);
+    if (issues.length > 0) return { participantIssues: issues };
+
     return redirect(`/submit/${slug}?step=review`);
   }
 
@@ -332,8 +497,18 @@ export default function Submit() {
     draft,
     me,
     existingCount,
+    roster,
+    roles,
+    participantCap,
+    addable,
     ms,
   } = useLoaderData<typeof loader>();
+  const action = useActionData<{
+    error?: string;
+    addError?: string;
+    savedSelf?: boolean;
+    participantIssues?: ParticipantIssue[];
+  }>();
   const nav = useNavigation();
   const busy = nav.state !== "idle";
 
@@ -619,60 +794,206 @@ export default function Submit() {
   }
 
   if (step === "speaker") {
+    const others = roster.filter((r) => !r.isPrimary);
+
     return shell(
-      <Form method="post" className="space-y-4">
-        <input type="hidden" name="step" value="speaker" />
-        <h2 className="text-[16px] font-semibold">About you</h2>
-        {speakerFields.map((f) => (
-          <label key={f.id} className="block">
-            <span className="text-[13px] font-medium">
-              {f.label}
-              {f.required && <span className="text-danger"> *</span>}
-            </span>
-            {f.helpText && (
-              <span className="block text-[12px] text-dim">
-                {f.helpText}
+      <div className="space-y-5">
+        <div>
+          <h2 className="text-[16px] font-semibold">Who is presenting</h2>
+          <p className="mt-0.5 text-[13px] text-dim">
+            {describeRoles(roles, participantCap)}
+          </p>
+        </div>
+
+        {/* Minimums and maximums, stated before they are enforced. */}
+        {action?.participantIssues && action.participantIssues.length > 0 && (
+          <div className="cb-note cb-note-danger px-3 py-2.5">
+            <div className="text-[13px] font-medium">
+              Not quite ready to continue
+            </div>
+            <ul className="mt-1 space-y-0.5">
+              {action.participantIssues.map((p, i) => (
+                <li key={i} className="text-[13px]">
+                  {p.message}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {/* The submitter */}
+        <Form method="post" className="space-y-4 rounded-xl border border-line p-4">
+          <input type="hidden" name="step" value="speaker" />
+          <input type="hidden" name="pIntent" value="save_self" />
+          <div className="flex items-center gap-2">
+            <span className="text-[14px] font-medium text-strong">You</span>
+            <span className="cb-pill cb-pill-accent">Primary Speaker</span>
+          </div>
+          {speakerFields.map((f) => (
+            <label key={f.id} className="block">
+              <span className="text-[13px] font-medium">
+                {f.label}
+                {f.required && <span className="text-danger"> *</span>}
               </span>
+              {f.helpText && (
+                <span className="block text-[12px] text-dim">{f.helpText}</span>
+              )}
+              {["textarea", "wysiwyg"].includes(f.type) ? (
+                <textarea
+                  name={f.key}
+                  required={f.required}
+                  rows={5}
+                  defaultValue={
+                    (me?.[f.key as keyof typeof me] as string | null) ?? ""
+                  }
+                  className={input}
+                />
+              ) : (
+                <input
+                  name={f.key}
+                  type={f.type === "email" ? "email" : "text"}
+                  required={f.required}
+                  readOnly={f.key === "email"}
+                  defaultValue={
+                    (me?.[f.key as keyof typeof me] as string | null) ?? ""
+                  }
+                  className={`${input} ${f.key === "email" ? "bg-subtle text-dim" : ""}`}
+                />
+              )}
+            </label>
+          ))}
+          <button
+            disabled={busy}
+            className="cb-btn cb-btn-secondary px-3 py-1.5 text-[13px]"
+          >
+            {busy ? "Saving" : action?.savedSelf ? "Saved" : "Save my details"}
+          </button>
+        </Form>
+
+        {/* Co participants already added */}
+        {others.length > 0 && (
+          <ul className="space-y-2">
+            {others.map((p) => (
+              <li
+                key={p.linkId}
+                className="flex items-start gap-3 rounded-xl border border-line px-4 py-3"
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-[14px] font-medium text-strong">
+                      {[p.firstName, p.lastName].filter(Boolean).join(" ") ||
+                        p.email}
+                    </span>
+                    <span className="cb-pill cb-pill-neutral">{p.role}</span>
+                  </div>
+                  <div className="text-[12px] text-dim">
+                    {[p.email, p.jobTitle, p.company].filter(Boolean).join(" · ")}
+                  </div>
+                </div>
+                <Form method="post">
+                  <input type="hidden" name="step" value="speaker" />
+                  <input type="hidden" name="pIntent" value="remove" />
+                  <input type="hidden" name="linkId" value={p.linkId} />
+                  <button
+                    disabled={busy}
+                    className="cb-btn cb-btn-danger px-2 py-1 text-[12px]"
+                  >
+                    Remove
+                  </button>
+                </Form>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {/* Add another */}
+        {addable.length > 0 ? (
+          <Form
+            method="post"
+            className="space-y-3 rounded-xl border border-dashed border-line-strong p-4"
+          >
+            <input type="hidden" name="step" value="speaker" />
+            <input type="hidden" name="pIntent" value="add" />
+            <div className="text-[14px] font-medium text-strong">
+              Add someone else
+            </div>
+
+            {action?.addError && (
+              <p className="cb-note cb-note-danger px-3 py-2 text-[13px]">
+                {action.addError}
+              </p>
             )}
-            {["textarea", "wysiwyg"].includes(f.type) ? (
-              <textarea
-                name={f.key}
-                required={f.required}
-                rows={5}
-                defaultValue={
-                  (me?.[f.key as keyof typeof me] as string | null) ?? ""
-                }
-                className={input}
-              />
-            ) : (
-              <input
-                name={f.key}
-                type={f.type === "email" ? "email" : "text"}
-                required={f.required}
-                readOnly={f.key === "email"}
-                defaultValue={
-                  (me?.[f.key as keyof typeof me] as string | null) ?? ""
-                }
-                className={`${input} ${f.key === "email" ? "bg-subtle text-dim" : ""}`}
-              />
-            )}
-          </label>
-        ))}
-        <div className="flex gap-2">
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="block">
+                <span className="text-[13px] font-medium">
+                  First name<span className="text-danger"> *</span>
+                </span>
+                <input name="first_name" className={input} />
+              </label>
+              <label className="block">
+                <span className="text-[13px] font-medium">Last name</span>
+                <input name="last_name" className={input} />
+              </label>
+              <label className="block">
+                <span className="text-[13px] font-medium">
+                  Email<span className="text-danger"> *</span>
+                </span>
+                <input name="email" type="email" className={input} />
+              </label>
+              <label className="block">
+                <span className="text-[13px] font-medium">Role</span>
+                <select name="role" className={input} defaultValue={addable[0]}>
+                  {addable.map((r) => (
+                    <option key={r} value={r}>
+                      {r}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="block">
+                <span className="text-[13px] font-medium">Company</span>
+                <input name="company" className={input} />
+              </label>
+              <label className="block">
+                <span className="text-[13px] font-medium">Job title</span>
+                <input name="job_title" className={input} />
+              </label>
+            </div>
+            <label className="block">
+              <span className="text-[13px] font-medium">Biography</span>
+              <textarea name="bio" rows={3} className={input} />
+            </label>
+            <button
+              disabled={busy}
+              className="cb-btn cb-btn-secondary px-3 py-1.5 text-[13px]"
+            >
+              {busy ? "Adding" : "Add to submission"}
+            </button>
+          </Form>
+        ) : (
+          <p className="rounded-xl border border-dashed border-line px-4 py-3 text-[13px] text-dim">
+            You have added everyone this form allows.
+          </p>
+        )}
+
+        <Form method="post" className="flex gap-2">
+          <input type="hidden" name="step" value="speaker" />
+          <input type="hidden" name="pIntent" value="continue" />
           <a
             href="?step=proposal"
-            className="rounded-lg border border-line-strong px-4 py-2 text-[14px] text-body hover:bg-subtle"
+            className="cb-btn cb-btn-secondary px-4 py-2 text-[14px]"
           >
             Back
           </a>
           <button
             disabled={busy}
-            className="rounded-lg bg-invert px-4 py-2 text-[14px] font-medium text-invert-fg hover:bg-invert-hover disabled:opacity-50"
+            className="cb-btn cb-btn-primary px-4 py-2 text-[14px]"
           >
-            {busy ? "Saving" : "Save and continue"}
+            {busy ? "Checking" : "Continue"}
           </button>
-        </div>
-      </Form>,
+        </Form>
+      </div>,
     );
   }
 

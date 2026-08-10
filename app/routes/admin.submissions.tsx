@@ -111,6 +111,8 @@ export async function loader({ context, request }: LoaderFunctionArgs) {
           firstName: participants.firstName,
           lastName: participants.lastName,
           company: participants.company,
+          role: submissionParticipants.role,
+          sortOrder: submissionParticipants.sortOrder,
           isPrimary: submissionParticipants.isPrimary,
         })
         .from(submissionParticipants)
@@ -123,13 +125,19 @@ export async function loader({ context, request }: LoaderFunctionArgs) {
 
   const speakersBySubmission: Record<
     string,
-    { name: string; company: string | null }[]
+    { name: string; company: string | null; role: string; isPrimary: boolean }[]
   > = {};
   for (const s of speakerRows) {
     (speakersBySubmission[s.submissionId] ??= []).push({
-      name: [s.firstName, s.lastName].filter(Boolean).join(" "),
+      name: [s.firstName, s.lastName].filter(Boolean).join(" ") || "Unnamed",
       company: s.company,
+      role: s.role,
+      isPrimary: s.isPrimary,
     });
+  }
+  // Primary first, then the order they were added.
+  for (const list of Object.values(speakersBySubmission)) {
+    list.sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary));
   }
 
   const trackList = await db
@@ -330,15 +338,19 @@ export default function Submissions() {
                         {speakers.length === 0 ? (
                           <span className="text-faint">None yet</span>
                         ) : (
-                          <>
-                            {speakers[0].name}
-                            {speakers.length > 1 && (
-                              <span className="text-faint">
-                                {" "}
-                                +{speakers.length - 1}
-                              </span>
-                            )}
-                          </>
+                          <ul className="space-y-0.5">
+                            {speakers.map((sp, i) => (
+                              <li
+                                key={i}
+                                className="flex items-center gap-1.5 whitespace-nowrap"
+                              >
+                                <span>{sp.name}</span>
+                                <span className="cb-pill cb-pill-neutral">
+                                  {sp.role}
+                                </span>
+                              </li>
+                            ))}
+                          </ul>
                         )}
                       </td>
                       <td className="whitespace-nowrap px-4 py-2.5">

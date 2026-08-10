@@ -3,7 +3,14 @@ import { Form, Link, useLoaderData, useNavigation } from "react-router";
 import type { LoaderFunctionArgs, ActionFunctionArgs } from "react-router";
 import { eq, and, asc } from "drizzle-orm";
 import { getDb, DEMO_EVENT_ID } from "~/db/client";
-import { forms, formFields, fieldDefinitions } from "~/db/schema";
+import { forms, formFields, fieldDefinitions, personas } from "~/db/schema";
+import {
+  DEFAULT_ROLES,
+  describeRoles,
+  parseRoles,
+  plural,
+  type RoleRule,
+} from "~/lib/participants";
 
 export async function loader({ context, params }: LoaderFunctionArgs) {
   const started = Date.now();
@@ -41,7 +48,19 @@ export async function loader({ context, params }: LoaderFunctionArgs) {
     .from(fieldDefinitions)
     .where(eq(fieldDefinitions.eventId, DEMO_EVENT_ID));
 
-  return { form, fields, library, ms: Date.now() - started };
+  const personaList = await db
+    .select({ id: personas.id, name: personas.name })
+    .from(personas)
+    .where(eq(personas.eventId, DEMO_EVENT_ID));
+
+  return {
+    form,
+    fields,
+    library,
+    personaList,
+    roles: parseRoles(form.participantRoles),
+    ms: Date.now() - started,
+  };
 }
 
 /* ------------------------------------------------------------------ *
@@ -54,9 +73,31 @@ type Warning = { level: "block" | "warn"; message: string; fix?: string };
 
 function preflight(
   form: typeof forms.$inferSelect,
-  fields: { label: string; type: string; options: unknown; required: boolean; step: string }[],
+  fields: {
+    label: string;
+    type: string;
+    options: unknown;
+    required: boolean;
+    step: string;
+    key: string;
+  }[],
 ): Warning[] {
   const out: Warning[] = [];
+
+  /* The mistake this whole preflight exists for. Requiring two of any
+     role means a person submitting on their own cannot get past the
+     participant step, and they find out only after writing the
+     proposal. Nothing in the admin ever shows you the people who gave
+     up, so this has to be caught here. */
+  for (const r of parseRoles(form.participantRoles)) {
+    if (r.min > 1) {
+      out.push({
+        level: "block",
+        message: `You are requiring at least ${r.min} ${plural(r.role, r.min)} on every submission. Anyone submitting on their own will be blocked at the participant step, after they have already written their proposal.`,
+        fix: `Set the minimum for ${plural(r.role, 2)} to 1 and let submitters add more if they have them.`,
+      });
+    }
+  }
 
   if (form.closeAt && new Date(form.closeAt).getTime() < Date.now()) {
     out.push({
@@ -209,7 +250,66 @@ export async function action({ context, request, params }: ActionFunctionArgs) {
       .where(eq(formFields.id, id));
   }
 
+  if (intent === "save_participants") {
+    /* One row per persona. An unchecked persona is simply absent from
+       the saved rules, so it never appears on the public form. */
+    const rules: RoleRule[] = [];
+    for (const role of fd.getAll("role") as string[]) {
+      if (fd.get(`enabled_${role}`) !== "on") continue;
+      const min = Number(fd.get(`min_${role}`) ?? 0);
+      const rawMax = String(fd.get(`max_${role}`) ?? "").trim();
+      rules.push({
+        role,
+        min: Number.isFinite(min) ? Math.max(0, Math.trunc(min)) : 0,
+        max: rawMax === "" ? null : Math.max(0, Math.trunc(Number(rawMax))),
+      });
+    }
+
+    const capRaw = String(fd.get("participantCap") ?? "").trim();
+
+    await db
+      .update(forms)
+      .set({
+        participantRoles: rules.length ? rules : DEFAULT_ROLES,
+        participantCap: capRaw === "" ? null : Math.max(1, Number(capRaw)),
+        updatedAt: new Date(),
+      })
+      .where(eq(forms.id, formId));
+  }
+
   if (intent === "publish") {
+    /* Re-run the preflight here rather than trusting the disabled button.
+       A blocker that only exists in the browser is not a blocker, and
+       this one exists to stop a form going live that no solo submitter
+       can complete. */
+    const form = await db.query.forms.findFirst({ where: eq(forms.id, formId) });
+    if (!form) throw new Response("Form not found", { status: 404 });
+
+    const current = await db
+      .select({
+        label: fieldDefinitions.label,
+        type: fieldDefinitions.type,
+        options: fieldDefinitions.options,
+        key: fieldDefinitions.key,
+        required: formFields.required,
+        step: formFields.step,
+      })
+      .from(formFields)
+      .innerJoin(
+        fieldDefinitions,
+        eq(formFields.fieldDefinitionId, fieldDefinitions.id),
+      )
+      .where(eq(formFields.formId, formId));
+
+    const blockers = preflight(form, current as never).filter(
+      (w) => w.level === "block",
+    );
+    if (blockers.length > 0) {
+      return {
+        publishRefused: blockers.map((b) => b.message),
+      };
+    }
+
     await db.update(forms).set({ status: "open" }).where(eq(forms.id, formId));
   }
 
@@ -224,7 +324,8 @@ function toDateInput(d: Date | string | null | undefined) {
 }
 
 export default function FormBuilder() {
-  const { form, fields, library, ms } = useLoaderData<typeof loader>();
+  const { form, fields, library, personaList, roles, ms } =
+    useLoaderData<typeof loader>();
   const nav = useNavigation();
   const busy = nav.state !== "idle";
   const [openCond, setOpenCond] = useState<string | null>(null);
@@ -514,9 +615,121 @@ export default function FormBuilder() {
         {renderGroup(
           participantFields,
           "participant",
-          "About the speaker",
-          "Contact details and anything you need for the programme.",
+          "Participant information",
+          "Contact details and anything you need for the programme. These fields are asked for each person on the submission.",
         )}
+
+        {/* Who may be added */}
+        <section className="mb-8">
+          <h2 className="text-[15px] font-semibold tracking-tight">
+            Who submitters can add
+          </h2>
+          <p className="mb-3 mt-0.5 text-[13px] text-dim">
+            The submitter is always added as the primary Speaker. These rules
+            govern anyone else they put on the submission.
+          </p>
+
+          <Form
+            method="post"
+            className="space-y-4 rounded-lg border border-line bg-surface p-4"
+          >
+            <input type="hidden" name="intent" value="save_participants" />
+
+            <div className="overflow-hidden rounded-md border border-line">
+              <table className="w-full text-left text-[13px]">
+                <thead>
+                  <tr className="cb-thead text-[11px] uppercase tracking-[0.06em]">
+                    <th className="px-3 py-2 font-medium">Role</th>
+                    <th className="w-28 px-3 py-2 font-medium">Minimum</th>
+                    <th className="w-28 px-3 py-2 font-medium">Maximum</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {personaList.map((p) => {
+                    const rule = roles.find((r) => r.role === p.name);
+                    return (
+                      <tr
+                        key={p.id}
+                        className="border-b border-line-soft last:border-0"
+                      >
+                        <td className="px-3 py-2">
+                          <input type="hidden" name="role" value={p.name} />
+                          <label className="flex items-center gap-2">
+                            <input
+                              type="checkbox"
+                              name={`enabled_${p.name}`}
+                              defaultChecked={Boolean(rule)}
+                              className="h-4 w-4 rounded border-line-strong"
+                            />
+                            <span className="text-strong">{p.name}</span>
+                          </label>
+                        </td>
+                        <td className="px-3 py-2">
+                          <input
+                            type="number"
+                            min={0}
+                            name={`min_${p.name}`}
+                            defaultValue={rule?.min ?? 0}
+                            className="w-20 rounded-md border border-line-strong bg-surface px-2 py-1 text-[13px] text-strong"
+                          />
+                        </td>
+                        <td className="px-3 py-2">
+                          <input
+                            type="number"
+                            min={0}
+                            name={`max_${p.name}`}
+                            defaultValue={rule?.max ?? ""}
+                            placeholder="No limit"
+                            className="w-24 rounded-md border border-line-strong bg-surface px-2 py-1 text-[13px] text-strong"
+                          />
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            <label className="block">
+              <span className="text-[13px] font-medium">
+                Total people per submission
+              </span>
+              <span className="block text-[12px] text-dim">
+                Across all roles. Leave blank for no overall cap.
+              </span>
+              <input
+                type="number"
+                min={1}
+                name="participantCap"
+                defaultValue={form.participantCap ?? ""}
+                placeholder="No cap"
+                className="mt-1 w-32 rounded-md border border-line-strong bg-surface px-2.5 py-1.5 text-[13px] text-strong"
+              />
+            </label>
+
+            {/* Same resolver idea as the settings block: read the effect
+                back, not the numbers. */}
+            <div className="rounded-md bg-subtle px-3 py-2 text-[12px] text-body">
+              <div className="mb-0.5 font-medium text-strong">
+                What submitters will experience
+              </div>
+              {describeRoles(roles, form.participantCap)}
+              {roles.some((r) => r.min > 1) && (
+                <span className="mt-1 block font-medium text-danger">
+                  A minimum above one blocks anyone submitting alone. Publishing
+                  is disabled until you lower it.
+                </span>
+              )}
+            </div>
+
+            <button
+              disabled={busy}
+              className="cb-btn cb-btn-primary px-3 py-1.5 text-[13px]"
+            >
+              {busy ? "Saving" : "Save participant rules"}
+            </button>
+          </Form>
+        </section>
 
         {/* Settings */}
         <section>

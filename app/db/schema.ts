@@ -98,6 +98,16 @@ export const forms = sqliteTable("forms", {
 
   adminNotifyNew: text("admin_notify_new", { mode: "json" }).$type<string[]>(),
   adminNotifyUpdate: text("admin_notify_update", { mode: "json" }).$type<string[]>(),
+  /* Which roles a submitter may add, and how many of each.
+     [{ role: "Speaker", min: 1, max: 3 }]. A null max means no limit.
+     Empty or absent means the historical behaviour: one Speaker, the
+     submitter, and nobody else. */
+  participantRoles: text("participant_roles", { mode: "json" }).$type<
+    { role: string; min: number; max: number | null }[]
+  >(),
+  // Ceiling across every role combined, independent of the per role caps.
+  participantCap: integer("participant_cap"),
+
   // Send the submitter a confirmation when they finish. On by default:
   // a submitter who gets no acknowledgement assumes it failed and
   // submits again, which costs the organiser a duplicate to reconcile.

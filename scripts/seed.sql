@@ -78,7 +78,8 @@ INSERT INTO forms (
   id, event_id, name, public_slug, kind, status, version, collect_participants,
   welcome_html, terms_html, success_html,
   close_at, reminder_at, submission_limit, allow_multiple_drafts,
-  admin_notify_new, admin_notify_update
+  admin_notify_new, admin_notify_update,
+  participant_roles, participant_cap
 ) VALUES (
   'frm_cfp26', 'evt_aiewf26', 'Call for Speakers 2026', 'cfp-2026',
   'sessions', 'open', 1, 1,
@@ -87,7 +88,8 @@ INSERT INTO forms (
   '<h3>Thanks, we have it.</h3><p>Reviews go out the week of September 22. You can edit your submission until the deadline from your speaker portal.</p>',
   1789491540, 1788886740, 3, 0,
   '["swyx@ai.engineer","chrissy@ai.engineer"]',
-  '["swyx@ai.engineer"]'
+  '["swyx@ai.engineer"]',
+  '[{"role":"Speaker","min":1,"max":3},{"role":"Moderator","min":0,"max":1},{"role":"Panelist","min":0,"max":4}]', 5
 );
 
 INSERT INTO form_fields (id, form_id, field_definition_id, step, sort_order, required, locked, conditional_rule) VALUES

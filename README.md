@@ -40,6 +40,8 @@ Routing rules run at submit time, from both the public form and the API, through
 
 Everything a rule does is recorded on the submission as a routing trail and shown on the submission detail page under "How it got here", in plain language: `Because Format is "Workshop (90 min)": sent to Workshop Review with 2 reviewers assigned`.
 
+Submissions carry as many people as the form allows. The builder picks which roles submitters may add, drawn from the personas library, with an optional minimum and maximum per role and a cap across all roles. The public form adds the submitter automatically as the primary Speaker and lets them add co participants with name, email, role, company, job title and biography. Every participant and their role shows on the submissions list and the detail page.
+
 ### 2. Self-service speaker portal
 
 `/portal`.
@@ -121,7 +123,7 @@ This is the section worth reading. Each of these is a small piece of judgement t
 
 ### Publish preflight that blocks a form before it can trap submitters
 
-A form builder will happily let you build a form nobody can complete. Before a form can be published, Callboard runs a preflight and separates blockers from warnings. Blockers stop the publish button outright: a close date already in the past, a dropdown or radio field with no options to choose from, no email field anywhere on the form, a per person submission limit below one. Warnings are advice and do not stop anything: more than twelve required fields, or no close date at all.
+A form builder will happily let you build a form nobody can complete. Before a form can be published, Callboard runs a preflight and separates blockers from warnings. Blockers stop the publish button outright: a close date already in the past, a dropdown or radio field with no options to choose from, no email field anywhere on the form, a per person submission limit below one, and any participant role with a minimum above one. That last one is the failure this whole check exists for, so the message names it: requiring two speakers blocks anyone submitting alone, and they only find out after writing the proposal. The publish action re-runs the preflight server side, because a blocker that only disables a button is not a blocker. Warnings are advice and do not stop anything: more than twelve required fields, or no close date at all.
 
 Why: the failure mode we cared about is not the organiser being inconvenienced, it is a speaker halfway through a proposal hitting a field they cannot answer and giving up. That damage is invisible to the organiser, because the people it happens to never appear in the admin. Blocking at publish time is the only moment the software can catch it.
 

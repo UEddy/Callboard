@@ -53,6 +53,7 @@ export async function loader({ context, params }: LoaderFunctionArgs) {
       lastName: participants.lastName,
       email: participants.email,
       company: participants.company,
+      jobTitle: participants.jobTitle,
       role: submissionParticipants.role,
       isPrimary: submissionParticipants.isPrimary,
     })
@@ -298,16 +299,20 @@ export default function SubmissionDetail() {
             <ul className="mt-2 space-y-2">
               {speakers.map((s) => (
                 <li key={s.id} className="text-[13px]">
-                  <div className="font-medium text-strong">
-                    {[s.firstName, s.lastName].filter(Boolean).join(" ")}
-                    {s.isPrimary && (
-                      <span className="ml-1.5 rounded bg-muted px-1.5 py-0.5 text-[10px] font-normal text-dim">
-                        primary
-                      </span>
-                    )}
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="font-medium text-strong">
+                      {[s.firstName, s.lastName].filter(Boolean).join(" ") ||
+                        s.email}
+                    </span>
+                    <span
+                      className={`cb-pill ${s.isPrimary ? "cb-pill-accent" : "cb-pill-neutral"}`}
+                    >
+                      {s.isPrimary ? `Primary ${s.role}` : s.role}
+                    </span>
                   </div>
                   <div className="text-[12px] text-dim">
-                    {s.company ?? s.email}
+                    {[s.jobTitle, s.company].filter(Boolean).join(", ") ||
+                      s.email}
                   </div>
                 </li>
               ))}
