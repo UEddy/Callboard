@@ -294,6 +294,8 @@ npx wrangler dev --local
 
 Deployment is a GitHub Actions workflow (`.github/workflows/deploy.yml`) that runs on every push to `main` and can also be triggered manually. It installs, builds, and runs `wrangler deploy`.
 
+The workflow applies pending D1 migrations before deploying the worker. That ordering matters: deploying code that expects a column the database does not have takes the public submission form down. It is only safe to run unattended because drizzle/ contains migrations and nothing else, which is why the demo seed lives in scripts/.
+
 Set two repository secrets:
 
 - `CLOUDFLARE_API_TOKEN`, with Workers Scripts edit and D1 edit permissions

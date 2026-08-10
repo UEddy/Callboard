@@ -9,14 +9,31 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
       - run: npm ci
       - run: npm run build
-      - uses: cloudflare/wrangler-action@v3
+
+      # Schema first. Deploying code that expects a column the database
+      # does not have takes the public submission form down, which is
+      # exactly what happened once: three migrations sat unapplied while
+      # each deploy reported success.
+      #
+      # Safe to run unattended only because drizzle/ contains migrations
+      # and nothing else. The demo seed lives in scripts/ precisely so
+      # this command cannot reach it.
+      - name: Apply D1 migrations
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: d1 migrations apply callboard --remote
+
+      - name: Deploy worker
+        uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
