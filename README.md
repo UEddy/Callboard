@@ -85,6 +85,16 @@ Four kinds of conflict are detected on every load and surfaced both as a red out
 
 A matrix of accepted speakers against onboarding tasks (headshot, bio, slides, recording release, travel confirmation), one coloured dot per cell, sorted worst first: most overdue items, then least complete, then alphabetically. Four counters across the top: accepted speakers, fully onboarded, speakers with overdue items, and total open items. Accepting a submission is what creates the task assignments, so the dashboard fills itself as decisions go out.
 
+### Beyond the brief: the dashboard
+
+`/admin`.
+
+One screen, one loader, a fixed number of queries: the date and a countdown, four counters, a status row that links into the matching tab of the submissions list, an "also check" section, and the eight most recent submissions.
+
+The nudges are the part worth having. Each one is derived from real rows and each disappears at zero, so an empty section means nothing needs attention rather than being a permanent fixture people learn to skip. Covered: decisions recorded but never emailed, scheduling conflicts, accepted sessions with no slot, submissions awaiting a decision, decisions staged but uncommitted, accepted speakers missing a bio or headshot, overdue speaker tasks, submissions with no reviewer, and forms left open past their deadline. They are ordered by how much damage each does if ignored.
+
+Conflict counting imports the agenda's own detector rather than reimplementing it. A dashboard that says two conflicts while the agenda shows three is worse than no dashboard, because the producer stops believing both numbers.
+
 ### Beyond the brief: the public display layer
 
 `/e/:eventSlug`, with the views in `app/components/PublicViews.tsx` and the producer's side at `/admin/embeds`.

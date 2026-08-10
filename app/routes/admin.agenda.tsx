@@ -11,129 +11,18 @@ import {
   tracks,
   events,
 } from "~/db/schema";
-
-/* ------------------------------------------------------------------ *
- * The event runs in America/Los_Angeles, which is PDT (UTC-7) across
- * all three days in October 2026. A fixed offset keeps the grid honest
- * without pulling in a timezone library.
- * ------------------------------------------------------------------ */
-const EVENT_UTC_OFFSET = -7;
-const DAY_START_HOUR = 8;
-const DAY_END_HOUR = 18;
-const SLOT_MINUTES = 30;
-
-const DURATION_BY_FORMAT: Record<string, number> = {
-  Keynote: 45,
-  "Talk (25 min)": 25,
-  "Workshop (90 min)": 90,
-  "Lightning Talk (10 min)": 10,
-};
-
-function durationFor(format: string | null) {
-  return (format && DURATION_BY_FORMAT[format]) || 30;
-}
-
-function slotToUtcMs(dayIso: string, hour: number, minute: number) {
-  const [y, m, d] = dayIso.split("-").map(Number);
-  return Date.UTC(y, m - 1, d, hour - EVENT_UTC_OFFSET, minute);
-}
-
-function utcMsToLocalParts(ms: number) {
-  const shifted = new Date(ms + EVENT_UTC_OFFSET * 3_600_000);
-  return {
-    dayIso: shifted.toISOString().slice(0, 10),
-    hour: shifted.getUTCHours(),
-    minute: shifted.getUTCMinutes(),
-  };
-}
-
-function fmtTime(hour: number, minute: number) {
-  const h = hour % 12 === 0 ? 12 : hour % 12;
-  const ap = hour < 12 ? "AM" : "PM";
-  return `${h}:${String(minute).padStart(2, "0")} ${ap}`;
-}
-
-/* --- Conflict detection ------------------------------------------- */
-
-type Scheduled = {
-  id: string;
-  ref: string;
-  title: string;
-  roomId: string | null;
-  startMs: number;
-  endMs: number;
-  roomName: string | null;
-  roomCapacity: number | null;
-  trackId: string | null;
-  trackName: string | null;
-  trackColor: string | null;
-  format: string | null;
-  speakers: { id: string; name: string }[];
-};
-
-type Conflict = {
-  kind: "room" | "speaker" | "hours" | "track";
-  message: string;
-  submissionIds: string[];
-};
-
-function detectConflicts(list: Scheduled[], dayIsos: string[]): Conflict[] {
-  const out: Conflict[] = [];
-  const overlaps = (a: Scheduled, b: Scheduled) =>
-    a.startMs < b.endMs && b.startMs < a.endMs;
-
-  for (let i = 0; i < list.length; i++) {
-    for (let j = i + 1; j < list.length; j++) {
-      const a = list[i];
-      const b = list[j];
-      if (!overlaps(a, b)) continue;
-
-      if (a.roomId && a.roomId === b.roomId) {
-        out.push({
-          kind: "room",
-          message: `${a.roomName} is double booked: ${a.ref} and ${b.ref} overlap.`,
-          submissionIds: [a.id, b.id],
-        });
-      }
-
-      const shared = a.speakers.filter((s) =>
-        b.speakers.some((t) => t.id === s.id),
-      );
-      for (const s of shared) {
-        out.push({
-          kind: "speaker",
-          message: `${s.name} is scheduled in two places at once: ${a.ref} and ${b.ref}.`,
-          submissionIds: [a.id, b.id],
-        });
-      }
-
-      if (a.trackId && a.trackId === b.trackId && a.roomId !== b.roomId) {
-        out.push({
-          kind: "track",
-          message: `Two ${a.trackName} sessions run at the same time: ${a.ref} and ${b.ref}. Attendees have to choose.`,
-          submissionIds: [a.id, b.id],
-        });
-      }
-    }
-  }
-
-  for (const s of list) {
-    const start = utcMsToLocalParts(s.startMs);
-    const end = utcMsToLocalParts(s.endMs);
-    const outsideDay = !dayIsos.includes(start.dayIso);
-    const tooEarly = start.hour < DAY_START_HOUR;
-    const tooLate = end.hour > DAY_END_HOUR || (end.hour === DAY_END_HOUR && end.minute > 0);
-    if (outsideDay || tooEarly || tooLate) {
-      out.push({
-        kind: "hours",
-        message: `${s.ref} falls outside event hours.`,
-        submissionIds: [s.id],
-      });
-    }
-  }
-
-  return out;
-}
+import {
+  DAY_END_HOUR,
+  DAY_START_HOUR,
+  SLOT_MINUTES,
+  detectConflicts,
+  durationFor,
+  eventDays,
+  fmtTime,
+  slotToUtcMs,
+  utcMsToLocalParts,
+  type Scheduled,
+} from "~/lib/schedule";
 
 /* --- Loader -------------------------------------------------------- */
 
@@ -249,18 +138,7 @@ export async function loader({ context }: LoaderFunctionArgs) {
     }
   }
 
-  const dayIsos: string[] = [];
-  if (event?.startsAt && event?.endsAt) {
-    const start = new Date(event.startsAt);
-    const end = new Date(event.endsAt);
-    for (
-      let d = new Date(start);
-      d.getTime() <= end.getTime();
-      d.setUTCDate(d.getUTCDate() + 1)
-    ) {
-      dayIsos.push(d.toISOString().slice(0, 10));
-    }
-  }
+  const dayIsos = eventDays(event?.startsAt ?? null, event?.endsAt ?? null);
 
   const conflicts = detectConflicts(scheduled, dayIsos);
 
