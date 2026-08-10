@@ -107,9 +107,11 @@ Conflict counting imports the agenda's own detector rather than reimplementing i
 
 `/e/:eventSlug`, with the views in `app/components/PublicViews.tsx` and the producer's side at `/admin/embeds`.
 
-Five views of the same programme: agenda grid, sessions list, schedule itinerary, speakers list, and speaker gallery. Each works as a standalone page with a view switcher and day and track filters, and each works inside an iframe with `?embed=1`, which strips the header, the switcher, and the footer so it sits inside a host page without looking bolted on.
+Five views of the same programme, each on its own URL: `/e/:eventSlug/agenda`, `/sessions`, `/speakers`, `/schedule`, and `/gallery`. A bare `/e/:eventSlug` opens the agenda. Every view carries a switcher and day and track filters, and every view works inside an iframe with `?embed=1`, which strips the header, the switcher, and the footer so it sits inside a host page without looking bolted on. One route module serves all five, so the path selects the view rather than duplicating the implementation, and an unrecognised view returns 404 rather than silently falling back to the agenda.
 
-`/admin/embeds` turns a view into a saved configuration with its own public token. A producer picks the format, filters by track or day, toggles which fields show, and copies an iframe snippet. Because the snippet carries the token rather than the settings, changing the configuration later updates every page that embedded it without anyone editing HTML. Switching an embed off stops it rendering rather than quietly falling back to a default.
+`/` redirects to the public agenda of the first event, so the deployed domain lands on the programme rather than a framework starter page.
+
+`/admin/embeds` turns a view into a saved configuration with its own public token. A producer picks the format, filters by track or day, toggles which fields show, and copies an iframe snippet. The preview renders the live page in a desktop frame and a 390px mobile frame side by side rather than behind a toggle, because the failure worth catching, an agenda grid that overflows on a phone, is only obvious when the narrow frame is on screen next to the wide one. Because the snippet carries the token rather than the settings, changing the configuration later updates every page that embedded it without anyone editing HTML. Switching an embed off stops it rendering rather than quietly falling back to a default.
 
 The whole surface reads accepted submissions only, and no route in it reads a cookie, which is what makes it safe to cache at the edge: `s-maxage=300` with `stale-while-revalidate=3600`.
 

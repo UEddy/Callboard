@@ -1,5 +1,9 @@
 import { data, Link, useLoaderData, useSearchParams } from "react-router";
-import type { LoaderFunctionArgs, HeadersFunction } from "react-router";
+import type {
+  LoaderFunctionArgs,
+  HeadersFunction,
+  MetaArgs,
+} from "react-router";
 import { getDb } from "~/db/client";
 import {
   DEFAULT_FIELDS,
@@ -8,6 +12,8 @@ import {
   parseFields,
   VIEWS,
   VIEW_LABEL,
+  VIEW_SLUG,
+  viewFromSlug,
   type View,
 } from "~/lib/public-event";
 import { renderView } from "~/components/PublicViews";
@@ -60,6 +66,10 @@ export async function loader({ context, params, request }: LoaderFunctionArgs) {
     name: string;
   } | null = null;
 
+  if (params.view && !viewFromSlug(params.view)) {
+    throw new Response("Unknown view", { status: 404 });
+  }
+
   const token = url.searchParams.get("token");
   let retired = false;
   if (token) {
@@ -90,8 +100,12 @@ export async function loader({ context, params, request }: LoaderFunctionArgs) {
     );
   }
 
+  /* Path first, then the query parameter, then whatever the saved embed
+     was configured as. A visitor on /e/x/speakers gets speakers even if
+     the token says otherwise. */
+  const fromPath = viewFromSlug(params.view);
   const rawView = url.searchParams.get("view") ?? saved?.format ?? "agenda";
-  const view: View = isView(rawView) ? rawView : "agenda";
+  const view: View = fromPath ?? (isView(rawView) ? rawView : "agenda");
 
   const track =
     url.searchParams.get("track") ??
@@ -129,8 +143,14 @@ export async function loader({ context, params, request }: LoaderFunctionArgs) {
   };
 }
 
-export function meta({ data }: { data?: { event?: { name: string } } }) {
-  const name = data?.event?.name ?? "Programme";
+/* The loader payload arrives as `loaderData`, not `data`. It is undefined
+   when the loader threw (an unknown view 404s), and the retired-embed
+   branch returns a payload with no event, so both fall back to a title
+   that does not pretend to know the event name. */
+export function meta({ loaderData }: MetaArgs<typeof loader>) {
+  const name =
+    loaderData && !loaderData.retired ? loaderData.event.name : null;
+  if (!name) return [{ title: "Programme" }];
   return [
     { title: `${name} programme` },
     { name: "description", content: `Sessions and speakers for ${name}.` },
@@ -195,11 +215,12 @@ export default function PublicEvent() {
           {VIEWS.map((v) => (
             <Link
               key={v}
-              to={`?${(() => {
+              to={(() => {
                 const n = new URLSearchParams(params);
-                n.set("view", v);
-                return n.toString();
-              })()}`}
+                n.delete("view");
+                const qs = n.toString();
+                return `/e/${event.slug}/${VIEW_SLUG[v]}${qs ? `?${qs}` : ""}`;
+              })()}
               prefetch="intent"
               className={[
                 "shrink-0 border-b-2 px-3 py-2 text-[13px] transition-colors",

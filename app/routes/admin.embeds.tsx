@@ -12,6 +12,7 @@ import {
   parseFields,
   type FieldToggles,
 } from "~/lib/public-event";
+import { PreviewFrames } from "~/components/PreviewFrames";
 
 /* ------------------------------------------------------------------ *
  * Embeds: the producer's side of the public display layer.
@@ -425,16 +426,7 @@ export default function Embeds() {
                 )}
 
                 {open === r.id && (
-                  <div className="border-t border-line-soft">
-                    <div className="border-b border-line-soft bg-subtle px-4 py-1.5 text-[11px] uppercase tracking-[0.06em] text-dim">
-                      Live preview
-                    </div>
-                    <iframe
-                      src={previewUrl}
-                      title={`${r.name} preview`}
-                      className="h-96 w-full border-0 bg-canvas"
-                    />
-                  </div>
+                  <PreviewFrames url={previewUrl} name={r.name} />
                 )}
               </div>
             );

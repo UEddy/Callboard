@@ -8,6 +8,7 @@ export default [
   route("files/*", "routes/files.$.tsx"),
   route("theme", "routes/theme.tsx"),
   route("e/:eventSlug", "routes/e.$eventSlug.tsx"),
+  route("e/:eventSlug/:view", "routes/e.$eventSlug.$view.tsx"),
   route("admin", "routes/admin.tsx", [
     index("routes/admin._index.tsx"),
     route("submissions", "routes/admin.submissions.tsx"),

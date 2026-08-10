@@ -40,6 +40,26 @@ export const VIEW_LABEL: Record<View, string> = {
   speaker_gallery: "Speaker gallery",
 };
 
+/* Each view has a URL of its own. The internal keys match the embeds
+   table, the slugs are what a visitor sees and what someone pastes into
+   a link, so they are short and say what they are. */
+export const VIEW_SLUG: Record<View, string> = {
+  agenda: "agenda",
+  session_list: "sessions",
+  speaker_list: "speakers",
+  schedule_itinerary: "schedule",
+  speaker_gallery: "gallery",
+};
+
+const SLUG_TO_VIEW: Record<string, View> = Object.fromEntries(
+  Object.entries(VIEW_SLUG).map(([view, slug]) => [slug, view as View]),
+) as Record<string, View>;
+
+export function viewFromSlug(slug: string | undefined): View | null {
+  if (!slug) return null;
+  return SLUG_TO_VIEW[slug] ?? null;
+}
+
 export function isView(v: unknown): v is View {
   return typeof v === "string" && (VIEWS as readonly string[]).includes(v);
 }
