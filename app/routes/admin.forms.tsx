@@ -114,9 +114,9 @@ export async function action({ context, request }: ActionFunctionArgs) {
 }
 
 const STATUS: Record<string, string> = {
-  open: "bg-emerald-50 text-emerald-700 ring-emerald-600/20",
-  closed: "bg-slate-100 text-slate-600 ring-slate-500/20",
-  draft: "bg-amber-50 text-amber-700 ring-amber-600/20",
+  open: "bg-success-soft text-success ring-success-ring",
+  closed: "bg-muted text-body ring-line",
+  draft: "bg-warn-soft text-warn ring-warn-ring",
 };
 
 export default function Forms() {
@@ -124,16 +124,16 @@ export default function Forms() {
 
   return (
     <div>
-      <div className="border-b border-slate-200 bg-white px-6 py-5">
+      <div className="border-b border-line bg-surface px-6 py-5">
         <div className="flex items-baseline justify-between">
           <div>
             <h1 className="text-[19px] font-semibold tracking-tight">Forms</h1>
-            <p className="mt-0.5 text-[13px] text-slate-500">
+            <p className="mt-0.5 text-[13px] text-dim">
               Collect abstracts and session proposals. Each form has its own
               public link.
             </p>
           </div>
-          <div className="rounded-md bg-slate-100 px-2 py-1 font-mono text-[11px] tabular-nums text-slate-500">
+          <div className="rounded-md bg-muted px-2 py-1 font-mono text-[11px] tabular-nums text-dim">
             {ms} ms
           </div>
         </div>
@@ -142,14 +142,14 @@ export default function Forms() {
           <Form method="post">
             <input type="hidden" name="intent" value="create" />
             <input type="hidden" name="kind" value="sessions" />
-            <button className="rounded-md bg-slate-900 px-3 py-1.5 text-[13px] font-medium text-white hover:bg-slate-700">
+            <button className="rounded-md bg-invert px-3 py-1.5 text-[13px] font-medium text-invert-fg hover:bg-invert-hover">
               New session form
             </button>
           </Form>
           <Form method="post">
             <input type="hidden" name="intent" value="create" />
             <input type="hidden" name="kind" value="abstracts" />
-            <button className="rounded-md border border-slate-300 px-3 py-1.5 text-[13px] font-medium text-slate-700 hover:bg-slate-50">
+            <button className="rounded-md border border-line-strong px-3 py-1.5 text-[13px] font-medium text-body hover:bg-subtle">
               New abstract form
             </button>
           </Form>
@@ -158,9 +158,9 @@ export default function Forms() {
 
       <div className="space-y-2 px-6 py-4">
         {rows.length === 0 ? (
-          <div className="rounded-lg border border-slate-200 bg-white px-6 py-16 text-center">
-            <p className="text-[14px] font-medium text-slate-900">No forms yet</p>
-            <p className="mt-1 text-[13px] text-slate-500">
+          <div className="rounded-lg border border-line bg-surface px-6 py-16 text-center">
+            <p className="text-[14px] font-medium text-strong">No forms yet</p>
+            <p className="mt-1 text-[13px] text-dim">
               Create a form to start collecting submissions.
             </p>
           </div>
@@ -170,13 +170,13 @@ export default function Forms() {
             return (
               <div
                 key={f.id}
-                className="rounded-lg border border-slate-200 bg-white px-4 py-3"
+                className="rounded-lg border border-line bg-surface px-4 py-3"
               >
                 <div className="flex flex-wrap items-center gap-3">
                   <Link
                     to={`/admin/forms/${f.id}`}
                     prefetch="intent"
-                    className="text-[14px] font-medium text-slate-900 underline-offset-2 hover:text-indigo-700 hover:underline"
+                    className="text-[14px] font-medium text-strong underline-offset-2 hover:text-accent-text hover:underline"
                   >
                     {f.name}
                   </Link>
@@ -185,12 +185,12 @@ export default function Forms() {
                   >
                     {f.status}
                   </span>
-                  <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-600">
+                  <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] text-body">
                     {f.kind === "abstracts" ? "Abstracts" : "Sessions"}
                   </span>
                   {closed && f.status === "open" && (
                     <span
-                      className="rounded bg-rose-50 px-1.5 py-0.5 text-[11px] font-medium text-rose-700 ring-1 ring-inset ring-rose-600/20"
+                      className="rounded bg-danger-soft px-1.5 py-0.5 text-[11px] font-medium text-danger ring-1 ring-inset ring-danger-ring"
                       title="Marked open but the close date has passed, so submitters see a closed form"
                     >
                       Deadline passed
@@ -202,7 +202,7 @@ export default function Forms() {
                       href={`/submit/${f.publicSlug}`}
                       target="_blank"
                       rel="noreferrer"
-                      className="rounded-md border border-slate-300 px-2 py-1 text-[12px] font-medium text-slate-700 hover:bg-slate-50"
+                      className="rounded-md border border-line-strong px-2 py-1 text-[12px] font-medium text-body hover:bg-subtle"
                     >
                       Open public form
                     </a>
@@ -214,14 +214,14 @@ export default function Forms() {
                         name="next"
                         value={f.status === "open" ? "closed" : "open"}
                       />
-                      <button className="rounded-md border border-slate-300 px-2 py-1 text-[12px] font-medium text-slate-700 hover:bg-slate-50">
+                      <button className="rounded-md border border-line-strong px-2 py-1 text-[12px] font-medium text-body hover:bg-subtle">
                         {f.status === "open" ? "Close" : "Open"}
                       </button>
                     </Form>
                   </div>
                 </div>
 
-                <div className="mt-1.5 flex gap-4 text-[12px] text-slate-500 tabular-nums">
+                <div className="mt-1.5 flex gap-4 text-[12px] text-dim tabular-nums">
                   <span>{f.counts.total} submissions</span>
                   <span>{f.counts.drafts} drafts</span>
                   {f.closeAt && (
@@ -233,7 +233,7 @@ export default function Forms() {
                       })}
                     </span>
                   )}
-                  <span className="font-mono text-slate-400">/submit/{f.publicSlug}</span>
+                  <span className="font-mono text-faint">/submit/{f.publicSlug}</span>
                 </div>
               </div>
             );

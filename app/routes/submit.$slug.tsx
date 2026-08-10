@@ -15,6 +15,7 @@ import {
   tracks,
 } from "~/db/schema";
 import { readSession, writeSession } from "~/lib/session";
+import { applyRoutingRules } from "~/lib/routing";
 
 const STEPS = ["welcome", "account", "proposal", "speaker", "review"] as const;
 type Step = (typeof STEPS)[number];
@@ -245,6 +246,22 @@ export async function action({ context, request, params }: ActionFunctionArgs) {
         updatedAt: new Date(),
       })
       .where(eq(submissions.id, session.submissionId));
+
+    // Route on every save of this step, not just the first, so going back
+    // and changing the format re-evaluates instead of leaving the
+    // submission in a track chosen from an answer that no longer exists.
+    // Routing is a convenience for the organiser: if it fails, the
+    // submission is still saved and the producer can sort it out by hand.
+    try {
+      await applyRoutingRules(db, {
+        eventId: form.eventId,
+        formId: form.id,
+        submissionId: session.submissionId,
+      });
+    } catch (e) {
+      console.error("routing failed for", session.submissionId, e);
+    }
+
     return redirect(`/submit/${slug}?step=speaker`);
   }
 
@@ -284,7 +301,7 @@ export async function action({ context, request, params }: ActionFunctionArgs) {
 /* ------------------------------------------------------------------ */
 
 const input =
-  "mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-[14px] outline-none placeholder:text-slate-400 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100";
+  "mt-1 w-full rounded-lg border border-line-strong bg-surface px-3 py-2 text-[14px] outline-none placeholder:text-faint focus:border-accent-solid focus:ring-4 focus:ring-accent-ring";
 
 export default function Submit() {
   const {
@@ -331,13 +348,13 @@ export default function Submit() {
   const stepIndex = STEPS.indexOf(step as Step);
 
   const shell = (children: React.ReactNode) => (
-    <div className="min-h-screen bg-stone-100 px-4 py-10">
+    <div className="min-h-screen bg-canvas px-4 py-10">
       <div className="mx-auto max-w-2xl">
         <div className="mb-6">
-          <div className="text-[13px] font-medium uppercase tracking-[0.1em] text-slate-500">
+          <div className="text-[13px] font-medium uppercase tracking-[0.1em] text-dim">
             {event?.name}
           </div>
-          <h1 className="mt-1 text-[26px] font-semibold tracking-tight text-slate-900">
+          <h1 className="mt-1 text-[26px] font-semibold tracking-tight text-strong">
             {form.name}
           </h1>
         </div>
@@ -349,35 +366,35 @@ export default function Submit() {
                 key={s}
                 className={[
                   "flex items-center gap-1.5",
-                  i <= stepIndex ? "text-slate-900" : "text-slate-400",
+                  i <= stepIndex ? "text-strong" : "text-faint",
                 ].join(" ")}
               >
                 <span
                   className={[
                     "flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-medium",
                     i < stepIndex
-                      ? "bg-emerald-500 text-white"
+                      ? "bg-success-solid text-on-solid"
                       : i === stepIndex
-                        ? "bg-slate-900 text-white"
-                        : "bg-slate-200 text-slate-500",
+                        ? "bg-invert text-invert-fg"
+                        : "bg-muted-strong text-body",
                   ].join(" ")}
                 >
                   {i < stepIndex ? "✓" : i + 1}
                 </span>
                 <span className="capitalize">{s}</span>
                 {i < STEPS.length - 1 && (
-                  <span className="ml-1 text-slate-300">→</span>
+                  <span className="ml-1 text-faint">→</span>
                 )}
               </li>
             ))}
           </ol>
         )}
 
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="rounded-2xl border border-line bg-surface p-6 shadow-sm">
           {children}
         </div>
 
-        <div className="mt-4 flex justify-between text-[12px] text-slate-400">
+        <div className="mt-4 flex justify-between text-[12px] text-faint">
           <span>Powered by Callboard</span>
           <span className="font-mono tabular-nums">{ms} ms</span>
         </div>
@@ -389,7 +406,7 @@ export default function Submit() {
     return shell(
       <div className="py-6 text-center">
         <h2 className="text-[18px] font-semibold">Submissions are closed</h2>
-        <p className="mt-1 text-[14px] text-slate-500">
+        <p className="mt-1 text-[14px] text-dim">
           {form.closeAt
             ? `This form stopped accepting entries on ${new Date(form.closeAt).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}.`
             : "This form is not accepting entries right now."}
@@ -401,12 +418,12 @@ export default function Submit() {
   if (step === "done") {
     return shell(
       <div className="py-6 text-center">
-        <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-emerald-500 text-[18px] text-white">
+        <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-success-solid text-[18px] text-on-solid">
           ✓
         </div>
         <h2 className="text-[18px] font-semibold">You are in</h2>
         <div
-          className="mt-2 text-[14px] text-slate-600"
+          className="mt-2 text-[14px] text-body"
           dangerouslySetInnerHTML={{ __html: form.successHtml ?? "" }}
         />
       </div>,
@@ -417,13 +434,13 @@ export default function Submit() {
     return shell(
       <div>
         <div
-          className="prose-sm text-[14px] leading-relaxed text-slate-700"
+          className="prose-sm text-[14px] leading-relaxed text-body"
           dangerouslySetInnerHTML={{ __html: form.welcomeHtml ?? "" }}
         />
-        <dl className="mt-4 space-y-1 border-t border-slate-100 pt-4 text-[13px]">
+        <dl className="mt-4 space-y-1 border-t border-line-soft pt-4 text-[13px]">
           {form.closeAt && (
             <div className="flex gap-2">
-              <dt className="text-slate-500">Deadline</dt>
+              <dt className="text-dim">Deadline</dt>
               <dd className="font-medium">
                 {new Date(form.closeAt).toLocaleDateString("en-US", {
                   month: "long",
@@ -435,7 +452,7 @@ export default function Submit() {
           )}
           {form.submissionLimit && (
             <div className="flex gap-2">
-              <dt className="text-slate-500">Limit</dt>
+              <dt className="text-dim">Limit</dt>
               <dd className="font-medium">
                 {form.submissionLimit} per person, drafts included
               </dd>
@@ -444,7 +461,7 @@ export default function Submit() {
         </dl>
         <a
           href="?step=account"
-          className="mt-5 inline-block rounded-lg bg-slate-900 px-4 py-2 text-[14px] font-medium text-white hover:bg-slate-700"
+          className="mt-5 inline-block rounded-lg bg-invert px-4 py-2 text-[14px] font-medium text-invert-fg hover:bg-invert-hover"
         >
           Start
         </a>
@@ -458,7 +475,7 @@ export default function Submit() {
         <input type="hidden" name="step" value="account" />
         <div>
           <h2 className="text-[16px] font-semibold">Who are you?</h2>
-          <p className="mt-0.5 text-[13px] text-slate-500">
+          <p className="mt-0.5 text-[13px] text-dim">
             We use your email to save your progress. No password needed.
           </p>
         </div>
@@ -484,7 +501,7 @@ export default function Submit() {
           </label>
         </div>
         {existingCount > 0 && (
-          <p className="rounded-lg bg-slate-50 px-3 py-2 text-[13px] text-slate-600">
+          <p className="rounded-lg bg-subtle px-3 py-2 text-[13px] text-body">
             You already have {existingCount} submission
             {existingCount > 1 ? "s" : ""} on this form. We will pick up your
             draft if you have one.
@@ -492,7 +509,7 @@ export default function Submit() {
         )}
         <button
           disabled={busy}
-          className="rounded-lg bg-slate-900 px-4 py-2 text-[14px] font-medium text-white hover:bg-slate-700 disabled:opacity-50"
+          className="rounded-lg bg-invert px-4 py-2 text-[14px] font-medium text-invert-fg hover:bg-invert-hover disabled:opacity-50"
         >
           {busy ? "Working" : "Continue"}
         </button>
@@ -524,10 +541,10 @@ export default function Submit() {
             <label key={f.id} className="block">
               <span className="text-[13px] font-medium">
                 {f.label}
-                {f.required && <span className="text-rose-500"> *</span>}
+                {f.required && <span className="text-danger"> *</span>}
               </span>
               {f.helpText && (
-                <span className="block text-[12px] text-slate-500">
+                <span className="block text-[12px] text-dim">
                   {f.helpText}
                 </span>
               )}
@@ -565,18 +582,18 @@ export default function Submit() {
         <div className="flex gap-2">
           <a
             href="?step=account"
-            className="rounded-lg border border-slate-300 px-4 py-2 text-[14px] text-slate-700 hover:bg-slate-50"
+            className="rounded-lg border border-line-strong px-4 py-2 text-[14px] text-body hover:bg-subtle"
           >
             Back
           </a>
           <button
             disabled={busy}
-            className="rounded-lg bg-slate-900 px-4 py-2 text-[14px] font-medium text-white hover:bg-slate-700 disabled:opacity-50"
+            className="rounded-lg bg-invert px-4 py-2 text-[14px] font-medium text-invert-fg hover:bg-invert-hover disabled:opacity-50"
           >
             {busy ? "Saving" : "Save and continue"}
           </button>
         </div>
-        <p className="text-[12px] text-slate-400">
+        <p className="text-[12px] text-faint">
           Saved as you go. You can close this and come back.
         </p>
       </Form>,
@@ -592,10 +609,10 @@ export default function Submit() {
           <label key={f.id} className="block">
             <span className="text-[13px] font-medium">
               {f.label}
-              {f.required && <span className="text-rose-500"> *</span>}
+              {f.required && <span className="text-danger"> *</span>}
             </span>
             {f.helpText && (
-              <span className="block text-[12px] text-slate-500">
+              <span className="block text-[12px] text-dim">
                 {f.helpText}
               </span>
             )}
@@ -618,7 +635,7 @@ export default function Submit() {
                 defaultValue={
                   (me?.[f.key as keyof typeof me] as string | null) ?? ""
                 }
-                className={`${input} ${f.key === "email" ? "bg-slate-50 text-slate-500" : ""}`}
+                className={`${input} ${f.key === "email" ? "bg-subtle text-dim" : ""}`}
               />
             )}
           </label>
@@ -626,13 +643,13 @@ export default function Submit() {
         <div className="flex gap-2">
           <a
             href="?step=proposal"
-            className="rounded-lg border border-slate-300 px-4 py-2 text-[14px] text-slate-700 hover:bg-slate-50"
+            className="rounded-lg border border-line-strong px-4 py-2 text-[14px] text-body hover:bg-subtle"
           >
             Back
           </a>
           <button
             disabled={busy}
-            className="rounded-lg bg-slate-900 px-4 py-2 text-[14px] font-medium text-white hover:bg-slate-700 disabled:opacity-50"
+            className="rounded-lg bg-invert px-4 py-2 text-[14px] font-medium text-invert-fg hover:bg-invert-hover disabled:opacity-50"
           >
             {busy ? "Saving" : "Save and continue"}
           </button>
@@ -648,7 +665,7 @@ export default function Submit() {
       <input type="hidden" name="step" value="review" />
       <h2 className="text-[16px] font-semibold">Check it over</h2>
 
-      <dl className="divide-y divide-slate-100 rounded-lg border border-slate-200">
+      <dl className="divide-y divide-line-soft rounded-lg border border-line">
         {[
           ["Title", draft?.title],
           ["Format", draft?.format],
@@ -659,9 +676,9 @@ export default function Submit() {
           ["Company", me?.company],
         ].map(([k, v]) => (
           <div key={k as string} className="flex gap-4 px-3 py-2">
-            <dt className="w-24 shrink-0 text-[13px] text-slate-500">{k}</dt>
-            <dd className="text-[13px] font-medium text-slate-900">
-              {v || <span className="font-normal text-slate-400">Not set</span>}
+            <dt className="w-24 shrink-0 text-[13px] text-dim">{k}</dt>
+            <dd className="text-[13px] font-medium text-strong">
+              {v || <span className="font-normal text-faint">Not set</span>}
             </dd>
           </div>
         ))}
@@ -669,8 +686,8 @@ export default function Submit() {
 
       {draft?.description && (
         <div>
-          <div className="text-[13px] text-slate-500">Description</div>
-          <div className="mt-1 whitespace-pre-wrap rounded-lg bg-slate-50 px-3 py-2 text-[13px] text-slate-800">
+          <div className="text-[13px] text-dim">Description</div>
+          <div className="mt-1 whitespace-pre-wrap rounded-lg bg-subtle px-3 py-2 text-[13px] text-strong">
             {draft.description}
           </div>
         </div>
@@ -679,13 +696,13 @@ export default function Submit() {
       <div className="flex gap-2">
         <a
           href="?step=speaker"
-          className="rounded-lg border border-slate-300 px-4 py-2 text-[14px] text-slate-700 hover:bg-slate-50"
+          className="rounded-lg border border-line-strong px-4 py-2 text-[14px] text-body hover:bg-subtle"
         >
           Back
         </a>
         <button
           disabled={busy}
-          className="rounded-lg bg-emerald-600 px-4 py-2 text-[14px] font-medium text-white hover:bg-emerald-500 disabled:opacity-50"
+          className="rounded-lg bg-success-solid px-4 py-2 text-[14px] font-medium text-on-solid hover:bg-success-solid disabled:opacity-50"
         >
           {busy ? "Submitting" : "Submit proposal"}
         </button>

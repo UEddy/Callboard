@@ -3,6 +3,7 @@ import type { LoaderFunctionArgs } from "react-router";
 import { eq } from "drizzle-orm";
 import { getDb, DEMO_EVENT_ID } from "~/db/client";
 import { events } from "~/db/schema";
+import { ThemeToggle } from "~/components/ThemeToggle";
 
 export async function loader({ context }: LoaderFunctionArgs) {
   const db = getDb(context);
@@ -46,6 +47,7 @@ const NAV = [
     items: [
       { to: "/admin/embeds", label: "Embeds" },
       { to: "/admin/emails", label: "Emails" },
+      { to: "/admin/integrations", label: "Integrations" },
       { to: "/admin/settings", label: "Settings" },
     ],
   },
@@ -64,15 +66,15 @@ export default function AdminLayout() {
   const { event } = useLoaderData<typeof loader>();
 
   return (
-    <div className="min-h-screen bg-stone-50 text-slate-900">
+    <div className="min-h-screen bg-canvas text-strong">
       <div className="flex">
         {/* Sidebar */}
-        <aside className="sticky top-0 hidden h-screen w-60 shrink-0 flex-col border-r border-slate-200 bg-white md:flex">
-          <div className="border-b border-slate-200 px-4 py-4">
+        <aside className="sticky top-0 hidden h-screen w-60 shrink-0 flex-col border-r border-line bg-surface md:flex">
+          <div className="border-b border-line px-4 py-4">
             <div className="text-[13px] font-semibold tracking-tight">
               {event?.name ?? "Callboard"}
             </div>
-            <div className="mt-0.5 text-[11px] text-slate-500 tabular-nums">
+            <div className="mt-0.5 text-[11px] text-dim tabular-nums">
               {formatRange(
                 event?.startsAt ? new Date(event.startsAt) : null,
                 event?.endsAt ? new Date(event.endsAt) : null,
@@ -84,7 +86,7 @@ export default function AdminLayout() {
             {NAV.map((group, i) => (
               <div key={i} className="mb-4">
                 {group.heading && (
-                  <div className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-400">
+                  <div className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-faint">
                     {group.heading}
                   </div>
                 )}
@@ -98,8 +100,8 @@ export default function AdminLayout() {
                       [
                         "block rounded-md px-2 py-1.5 text-[13px] transition-colors",
                         isActive
-                          ? "bg-indigo-50 font-medium text-indigo-700"
-                          : "text-slate-600 hover:bg-slate-100 hover:text-slate-900",
+                          ? "bg-accent-soft font-medium text-accent-text"
+                          : "text-body hover:bg-muted hover:text-strong",
                       ].join(" ")
                     }
                   >
@@ -110,10 +112,13 @@ export default function AdminLayout() {
             ))}
           </nav>
 
-          <div className="border-t border-slate-200 px-4 py-3">
+          <div className="space-y-2 border-t border-line px-4 py-3">
+            <ThemeToggle />
             <a
-              href="/agenda"
-              className="text-[12px] text-slate-500 underline-offset-2 hover:text-slate-900 hover:underline"
+              href={event ? `/e/${event.slug}` : "/"}
+              target="_blank"
+              rel="noreferrer"
+              className="block text-[12px] text-dim underline-offset-2 hover:text-strong hover:underline"
             >
               View public site
             </a>

@@ -339,36 +339,36 @@ export default function Decisions() {
     <section className="mb-6">
       <h2 className="text-[15px] font-semibold tracking-tight">
         {title}{" "}
-        <span className="font-normal text-slate-400 tabular-nums">
+        <span className="font-normal text-faint tabular-nums">
           {rows.length}
         </span>
       </h2>
-      <p className="mb-2 mt-0.5 text-[13px] text-slate-500">{blurb}</p>
+      <p className="mb-2 mt-0.5 text-[13px] text-dim">{blurb}</p>
 
-      <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+      <div className="overflow-hidden rounded-lg border border-line bg-surface">
         {rows.length === 0 ? (
-          <p className="px-4 py-8 text-center text-[13px] text-slate-500">
+          <p className="px-4 py-8 text-center text-[13px] text-dim">
             Nothing staged here.
           </p>
         ) : (
           rows.map((r) => (
             <div
               key={r.id}
-              className="flex flex-wrap items-center gap-3 border-b border-slate-100 px-4 py-2.5 last:border-0"
+              className="flex flex-wrap items-center gap-3 border-b border-line-soft px-4 py-2.5 last:border-0"
             >
-              <span className="font-mono text-[12px] text-slate-400">{r.ref}</span>
+              <span className="font-mono text-[12px] text-faint">{r.ref}</span>
               <div className="min-w-0 flex-1">
-                <div className="text-[13px] font-medium text-slate-900">
+                <div className="text-[13px] font-medium text-strong">
                   {r.title}
                 </div>
-                <div className="text-[12px] text-slate-500">
+                <div className="text-[12px] text-dim">
                   {(speakers[r.id] ?? []).map((s) => s.name).join(", ")} ·{" "}
                   {r.trackName ?? "No track"}
                 </div>
               </div>
               {r.status === "accept_queue" && !r.startsAt && (
                 <span
-                  className="rounded bg-amber-50 px-1.5 py-0.5 text-[11px] font-medium text-amber-700"
+                  className="rounded bg-warn-soft px-1.5 py-0.5 text-[11px] font-medium text-warn"
                   title="No slot yet, so the invite goes out without a room and gets updated later"
                 >
                   Not scheduled
@@ -378,7 +378,7 @@ export default function Decisions() {
                 <input type="hidden" name="intent" value="queue" />
                 <input type="hidden" name="submissionId" value={r.id} />
                 <input type="hidden" name="next" value="pending" />
-                <button className="text-[12px] text-slate-400 underline-offset-2 hover:text-slate-900 hover:underline">
+                <button className="text-[12px] text-faint underline-offset-2 hover:text-strong hover:underline">
                   Put back
                 </button>
               </Form>
@@ -395,7 +395,7 @@ export default function Decisions() {
           ))}
           <button
             disabled={busy}
-            className={`rounded-md px-3 py-1.5 text-[13px] font-medium text-white disabled:opacity-50 ${accent}`}
+            className={`cb-btn px-3 py-1.5 text-[13px] ${accent}`}
           >
             {busy ? "Sending" : `Commit and notify ${rows.length}`}
           </button>
@@ -406,18 +406,18 @@ export default function Decisions() {
 
   return (
     <div>
-      <div className="border-b border-slate-200 bg-white px-6 py-5">
+      <div className="border-b border-line bg-surface px-6 py-5">
         <div className="flex items-baseline justify-between">
           <div>
             <h1 className="text-[19px] font-semibold tracking-tight">
               Decisions
             </h1>
-            <p className="mt-0.5 text-[13px] text-slate-500">
+            <p className="mt-0.5 text-[13px] text-dim">
               Stage decisions, review them, then send. Nothing leaves until you
               commit.
             </p>
           </div>
-          <div className="rounded-md bg-slate-100 px-2 py-1 font-mono text-[11px] tabular-nums text-slate-500">
+          <div className="rounded-md bg-muted px-2 py-1 font-mono text-[11px] tabular-nums text-dim">
             {ms} ms
           </div>
         </div>
@@ -425,7 +425,7 @@ export default function Decisions() {
 
       <div className="px-6 py-4">
         {!mailConfigured && (
-          <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-[13px] text-amber-900">
+          <div className="mb-4 rounded-lg border border-warn-ring bg-warn-soft px-4 py-3 text-[13px] text-warn">
             <strong className="font-medium">Email is not connected.</strong>{" "}
             Decisions will be recorded and logged, but nothing will actually be
             delivered. Add a RESEND_API_KEY secret to send for real.
@@ -436,44 +436,44 @@ export default function Decisions() {
           acceptQueue,
           "Ready to accept",
           "Each speaker gets an acceptance email and a calendar invite. Sessions without a slot get an invite with no room, updated automatically when you schedule them.",
-          "bg-emerald-600 hover:bg-emerald-500",
+          "cb-btn-success",
         )}
 
         {queueBlock(
           declineQueue,
           "Ready to decline",
           "A short, kind decline. No calendar invite.",
-          "bg-slate-900 hover:bg-slate-700",
+          "cb-btn-primary",
         )}
 
         {unnotified.length > 0 && (
           <section className="mb-6">
-            <h2 className="text-[15px] font-semibold tracking-tight text-rose-700">
+            <h2 className="text-[15px] font-semibold tracking-tight text-danger">
               Decided but never told
             </h2>
-            <p className="mb-2 mt-0.5 text-[13px] text-slate-500">
+            <p className="mb-2 mt-0.5 text-[13px] text-dim">
               These have a decision on record and no email went out. Usually
               means something failed quietly.
             </p>
-            <div className="overflow-hidden rounded-lg border border-rose-200 bg-white">
+            <div className="overflow-hidden rounded-lg border border-danger-ring bg-surface">
               {unnotified.map((r) => (
                 <div
                   key={r.id}
-                  className="flex items-center gap-3 border-b border-slate-100 px-4 py-2.5 last:border-0"
+                  className="flex items-center gap-3 border-b border-line-soft px-4 py-2.5 last:border-0"
                 >
-                  <span className="font-mono text-[12px] text-slate-400">
+                  <span className="font-mono text-[12px] text-faint">
                     {r.ref}
                   </span>
                   <span className="flex-1 text-[13px] font-medium">
                     {r.title}
                   </span>
-                  <span className="text-[12px] text-slate-500">{r.status}</span>
+                  <span className="text-[12px] text-dim">{r.status}</span>
                   <Form method="post">
                     <input type="hidden" name="intent" value="resend" />
                     <input type="hidden" name="submissionId" value={r.id} />
                     <button
                       disabled={busy}
-                      className="rounded-md border border-slate-300 px-2 py-1 text-[12px] font-medium hover:bg-slate-50 disabled:opacity-50"
+                      className="rounded-md border border-line-strong px-2 py-1 text-[12px] font-medium hover:bg-subtle disabled:opacity-50"
                     >
                       Send now
                     </button>
@@ -488,18 +488,18 @@ export default function Decisions() {
           <h2 className="text-[15px] font-semibold tracking-tight">
             Recent mail
           </h2>
-          <p className="mb-2 mt-0.5 text-[13px] text-slate-500">
+          <p className="mb-2 mt-0.5 text-[13px] text-dim">
             Every send is logged, including the calendar sequence number.
           </p>
-          <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+          <div className="overflow-hidden rounded-lg border border-line bg-surface">
             {log.length === 0 ? (
-              <p className="px-4 py-8 text-center text-[13px] text-slate-500">
+              <p className="px-4 py-8 text-center text-[13px] text-dim">
                 Nothing sent yet.
               </p>
             ) : (
               <table className="w-full text-left text-[13px]">
                 <thead>
-                  <tr className="border-b border-slate-200 bg-slate-50/80 text-[11px] uppercase tracking-[0.06em] text-slate-500">
+                  <tr className="border-b border-line bg-subtle text-[11px] uppercase tracking-[0.06em] text-dim">
                     <th className="px-4 py-2 font-medium">To</th>
                     <th className="px-4 py-2 font-medium">Subject</th>
                     <th className="px-4 py-2 font-medium">Template</th>
@@ -509,11 +509,11 @@ export default function Decisions() {
                 </thead>
                 <tbody>
                   {log.map((l) => (
-                    <tr key={l.id} className="border-b border-slate-100 last:border-0">
-                      <td className="px-4 py-2 text-slate-600">{l.toEmail}</td>
+                    <tr key={l.id} className="border-b border-line-soft last:border-0">
+                      <td className="px-4 py-2 text-body">{l.toEmail}</td>
                       <td className="max-w-xs truncate px-4 py-2">{l.subject}</td>
-                      <td className="px-4 py-2 text-slate-500">{l.templateKey}</td>
-                      <td className="px-4 py-2 text-slate-500 tabular-nums">
+                      <td className="px-4 py-2 text-dim">{l.templateKey}</td>
+                      <td className="px-4 py-2 text-dim tabular-nums">
                         {l.icsUid ? `seq ${l.icsSequence}` : "—"}
                       </td>
                       <td className="px-4 py-2">
@@ -521,10 +521,10 @@ export default function Decisions() {
                           className={[
                             "rounded px-1.5 py-0.5 text-[11px] font-medium",
                             l.status === "sent"
-                              ? "bg-emerald-50 text-emerald-700"
+                              ? "bg-success-soft text-success"
                               : l.status === "failed"
-                                ? "bg-rose-50 text-rose-700"
-                                : "bg-slate-100 text-slate-600",
+                                ? "bg-danger-soft text-danger"
+                                : "bg-muted text-body",
                           ].join(" ")}
                         >
                           {l.status}

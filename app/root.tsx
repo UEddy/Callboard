@@ -5,10 +5,13 @@ import {
   Outlet,
   Scripts,
   ScrollRestoration,
+  useRouteLoaderData,
 } from "react-router";
+import type { LoaderFunctionArgs } from "react-router";
 
 import type { Route } from "./+types/root";
 import "./app.css";
+import { readTheme, themeAttribute, type Theme } from "./lib/theme";
 
 export const links: Route.LinksFunction = () => [
   { rel: "preconnect", href: "https://fonts.googleapis.com" },
@@ -23,12 +26,29 @@ export const links: Route.LinksFunction = () => [
   },
 ];
 
+/* The theme is resolved before the first byte of HTML, so the correct
+   palette is in the markup itself. No inline script, no post-hydration
+   correction, nothing to flash. */
+export async function loader({ request }: LoaderFunctionArgs) {
+  return { theme: await readTheme(request) };
+}
+
 export function Layout({ children }: { children: React.ReactNode }) {
+  const data = useRouteLoaderData<typeof loader>("root");
+  const theme: Theme = data?.theme ?? "system";
+  const attr = themeAttribute(theme);
+
   return (
-    <html lang="en">
+    <html lang="en" data-theme={attr}>
       <head>
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
+        {/* Tells the browser which UA palette to use for form controls and
+            scrollbars before any CSS has parsed. */}
+        <meta
+          name="color-scheme"
+          content={attr ? attr : "light dark"}
+        />
         <Meta />
         <Links />
       </head>
@@ -62,11 +82,11 @@ export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
   }
 
   return (
-    <main className="pt-16 p-4 container mx-auto">
-      <h1>{message}</h1>
-      <p>{details}</p>
+    <main className="container mx-auto p-4 pt-16 text-strong">
+      <h1 className="text-[22px] font-semibold tracking-tight">{message}</h1>
+      <p className="mt-1 text-[14px] text-dim">{details}</p>
       {stack && (
-        <pre className="w-full p-4 overflow-x-auto">
+        <pre className="mt-4 w-full overflow-x-auto rounded-lg border border-line bg-surface p-4 text-[12px] text-body">
           <code>{stack}</code>
         </pre>
       )}

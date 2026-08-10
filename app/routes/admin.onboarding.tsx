@@ -205,11 +205,11 @@ export async function action({ context, request }: ActionFunctionArgs) {
 }
 
 const CELL: Record<string, { dot: string; label: string }> = {
-  complete: { dot: "bg-emerald-500", label: "Done" },
-  in_progress: { dot: "bg-amber-400", label: "Started" },
-  not_started: { dot: "bg-slate-200", label: "Not started" },
-  overdue: { dot: "bg-rose-500", label: "Overdue" },
-  waived: { dot: "bg-slate-300 ring-1 ring-slate-400", label: "Waived" },
+  complete: { dot: "bg-success-solid", label: "Done" },
+  in_progress: { dot: "bg-warn-solid", label: "Started" },
+  not_started: { dot: "bg-muted-strong", label: "Not started" },
+  overdue: { dot: "bg-danger-solid", label: "Overdue" },
+  waived: { dot: "bg-muted-strong ring-1 ring-line-strong", label: "Waived" },
 };
 
 function agoLabel(ms: number | null) {
@@ -229,17 +229,17 @@ export default function Onboarding() {
 
   return (
     <div>
-      <div className="border-b border-slate-200 bg-white px-6 pb-5 pt-5">
+      <div className="border-b border-line bg-surface px-6 pb-5 pt-5">
         <div className="flex items-baseline justify-between">
           <div>
             <h1 className="text-[19px] font-semibold tracking-tight">
               Speaker onboarding
             </h1>
-            <p className="mt-0.5 text-[13px] text-slate-500">
+            <p className="mt-0.5 text-[13px] text-dim">
               Who is still holding things up, worst first.
             </p>
           </div>
-          <div className="rounded-md bg-slate-100 px-2 py-1 font-mono text-[11px] tabular-nums text-slate-500">
+          <div className="rounded-md bg-muted px-2 py-1 font-mono text-[11px] tabular-nums text-dim">
             {ms} ms
           </div>
         </div>
@@ -257,17 +257,17 @@ export default function Onboarding() {
           ].map((s) => (
             <div
               key={s.label}
-              className="rounded-lg border border-slate-200 bg-white px-3 py-2.5"
+              className="rounded-lg border border-line bg-surface px-3 py-2.5"
             >
               <div
                 className={[
                   "text-[22px] font-semibold tabular-nums",
-                  s.alert ? "text-rose-600" : "text-slate-900",
+                  s.alert ? "text-danger" : "text-strong",
                 ].join(" ")}
               >
                 {s.value}
               </div>
-              <div className="text-[12px] text-slate-500">{s.label}</div>
+              <div className="text-[12px] text-dim">{s.label}</div>
             </div>
           ))}
         </div>
@@ -288,7 +288,7 @@ export default function Onboarding() {
             <button
               type="submit"
               disabled={busy}
-              className="rounded-md bg-slate-900 px-3 py-1.5 text-[13px] font-medium text-white hover:bg-slate-700 disabled:opacity-50"
+              className="rounded-md bg-invert px-3 py-1.5 text-[13px] font-medium text-invert-fg hover:bg-invert-hover disabled:opacity-50"
             >
               {busy
                 ? "Sending"
@@ -297,17 +297,17 @@ export default function Onboarding() {
           </Form>
         )}
 
-        <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
+        <div className="overflow-x-auto rounded-lg border border-line bg-surface">
           {rows.length === 0 ? (
             <div className="px-6 py-16 text-center">
-              <p className="text-[14px] font-medium text-slate-900">
+              <p className="text-[14px] font-medium text-strong">
                 No accepted speakers yet
               </p>
-              <p className="mt-1 text-[13px] text-slate-500">
+              <p className="mt-1 text-[13px] text-dim">
                 Onboarding starts once you accept submissions.{" "}
                 <Link
                   to="/admin/submissions?tab=accept_queue"
-                  className="text-indigo-700 underline underline-offset-2"
+                  className="text-accent-text underline underline-offset-2"
                 >
                   Review the accept queue
                 </Link>
@@ -316,7 +316,7 @@ export default function Onboarding() {
           ) : (
             <table className="w-full text-left text-[13px]">
               <thead>
-                <tr className="border-b border-slate-200 bg-slate-50/80 text-[11px] uppercase tracking-[0.06em] text-slate-500">
+                <tr className="border-b border-line bg-subtle text-[11px] uppercase tracking-[0.06em] text-dim">
                   <th className="px-4 py-2 font-medium">Speaker</th>
                   <th className="px-4 py-2 font-medium">Session</th>
                   {taskList.map((t) => (
@@ -342,21 +342,21 @@ export default function Onboarding() {
                   return (
                     <tr
                       key={r.participantId}
-                      className="border-b border-slate-100 last:border-0 hover:bg-slate-50/70"
+                      className="border-b border-line-soft last:border-0 hover:bg-subtle"
                     >
                       <td className="px-4 py-2.5">
-                        <div className="font-medium text-slate-900">{r.name}</div>
-                        <div className="text-[12px] text-slate-500">
+                        <div className="font-medium text-strong">{r.name}</div>
+                        <div className="text-[12px] text-dim">
                           {r.company ?? r.email}
                         </div>
                       </td>
-                      <td className="px-4 py-2.5 text-slate-600">
+                      <td className="px-4 py-2.5 text-body">
                         {r.sessions.map((s) => (
                           <div key={s.ref} className="whitespace-nowrap">
-                            <span className="font-mono text-[12px] text-slate-400">
+                            <span className="font-mono text-[12px] text-faint">
                               {s.ref}
                             </span>{" "}
-                            <span className="text-slate-600">{s.title}</span>
+                            <span className="text-body">{s.title}</span>
                           </div>
                         ))}
                       </td>
@@ -376,24 +376,24 @@ export default function Onboarding() {
                       })}
                       <td className="px-4 py-2.5">
                         <div className="flex items-center gap-2">
-                          <div className="h-1.5 w-20 overflow-hidden rounded-full bg-slate-100">
+                          <div className="h-1.5 w-20 overflow-hidden rounded-full bg-muted">
                             <div
                               className={[
                                 "h-full rounded-full",
                                 r.overdue > 0
-                                  ? "bg-rose-500"
+                                  ? "bg-danger-solid"
                                   : pct === 100
-                                    ? "bg-emerald-500"
-                                    : "bg-indigo-500",
+                                    ? "bg-success-solid"
+                                    : "bg-accent-solid",
                               ].join(" ")}
                               style={{ width: `${pct}%` }}
                             />
                           </div>
-                          <span className="tabular-nums text-slate-500">
+                          <span className="tabular-nums text-dim">
                             {r.done}/{r.total}
                           </span>
                           {r.overdue > 0 && (
-                            <span className="rounded bg-rose-50 px-1.5 py-0.5 text-[11px] font-medium text-rose-700 ring-1 ring-inset ring-rose-600/20">
+                            <span className="rounded bg-danger-soft px-1.5 py-0.5 text-[11px] font-medium text-danger ring-1 ring-inset ring-danger-ring">
                               {r.overdue} overdue
                             </span>
                           )}
@@ -401,7 +401,7 @@ export default function Onboarding() {
                       </td>
                       <td className="px-4 py-2.5">
                         {r.done === r.total ? (
-                          <span className="text-[12px] text-slate-400">
+                          <span className="text-[12px] text-faint">
                             Nothing outstanding
                           </span>
                         ) : (
@@ -414,7 +414,7 @@ export default function Onboarding() {
                             <button
                               type="submit"
                               disabled={busy}
-                              className="rounded-md border border-slate-300 px-2 py-1 text-[12px] font-medium text-slate-700 hover:border-slate-400 hover:bg-slate-50 disabled:opacity-50"
+                              className="rounded-md border border-line-strong px-2 py-1 text-[12px] font-medium text-body hover:border-line-strong hover:bg-subtle disabled:opacity-50"
                             >
                               Remind
                             </button>
@@ -423,8 +423,8 @@ export default function Onboarding() {
                                 className={[
                                   "text-[12px]",
                                   recentlyNudged
-                                    ? "text-amber-600"
-                                    : "text-slate-400",
+                                    ? "text-warn"
+                                    : "text-faint",
                                 ].join(" ")}
                                 title={
                                   recentlyNudged
@@ -447,7 +447,7 @@ export default function Onboarding() {
         </div>
 
         {/* Legend */}
-        <div className="mt-3 flex flex-wrap gap-4 text-[12px] text-slate-500">
+        <div className="mt-3 flex flex-wrap gap-4 text-[12px] text-dim">
           {Object.entries(CELL).map(([k, v]) => (
             <span key={k} className="inline-flex items-center gap-1.5">
               <span className={`inline-block h-2 w-2 rounded-full ${v.dot}`} />

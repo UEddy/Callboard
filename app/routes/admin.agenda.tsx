@@ -376,21 +376,21 @@ export default function Agenda() {
 
   return (
     <div>
-      <div className="border-b border-slate-200 bg-white px-6 pt-5">
+      <div className="border-b border-line bg-surface px-6 pt-5">
         <div className="flex items-baseline justify-between">
           <div>
             <h1 className="text-[19px] font-semibold tracking-tight">Agenda</h1>
-            <p className="mt-0.5 text-[13px] text-slate-500">
+            <p className="mt-0.5 text-[13px] text-dim">
               Drag a session onto a slot, or click it then click where it goes.
             </p>
           </div>
           <div className="flex items-center gap-2">
             {conflicts.length > 0 && (
-              <span className="rounded-md bg-rose-50 px-2 py-1 text-[12px] font-medium text-rose-700 ring-1 ring-inset ring-rose-600/20">
+              <span className="rounded-md bg-danger-soft px-2 py-1 text-[12px] font-medium text-danger ring-1 ring-inset ring-danger-ring">
                 {conflicts.length} conflict{conflicts.length > 1 ? "s" : ""}
               </span>
             )}
-            <span className="rounded-md bg-slate-100 px-2 py-1 font-mono text-[11px] tabular-nums text-slate-500">
+            <span className="rounded-md bg-muted px-2 py-1 font-mono text-[11px] tabular-nums text-dim">
               {ms} ms
             </span>
           </div>
@@ -409,8 +409,8 @@ export default function Agenda() {
               className={[
                 "border-b-2 px-3 py-2 text-[13px]",
                 view === k
-                  ? "border-indigo-600 font-medium text-indigo-700"
-                  : "border-transparent text-slate-500 hover:text-slate-900",
+                  ? "border-accent-solid font-medium text-accent-text"
+                  : "border-transparent text-dim hover:text-strong",
               ].join(" ")}
             >
               {label}
@@ -420,7 +420,7 @@ export default function Agenda() {
       </div>
 
       {(view === "grid" || view === "list") && dayIsos.length > 0 && (
-        <div className="flex gap-2 border-b border-slate-200 bg-white px-6 py-2">
+        <div className="flex gap-2 border-b border-line bg-surface px-6 py-2">
           {dayIsos.map((d, i) => (
             <button
               key={d}
@@ -428,8 +428,8 @@ export default function Agenda() {
               className={[
                 "rounded-md px-2.5 py-1 text-[13px]",
                 d === day
-                  ? "bg-slate-900 font-medium text-white"
-                  : "text-slate-600 hover:bg-slate-100",
+                  ? "bg-invert font-medium text-invert-fg"
+                  : "text-body hover:bg-muted",
               ].join(" ")}
             >
               Day {i + 1}
@@ -453,7 +453,7 @@ export default function Agenda() {
             </h2>
             <div className="space-y-1.5">
               {unscheduled.length === 0 ? (
-                <p className="rounded-lg border border-dashed border-slate-300 px-3 py-6 text-center text-[12px] text-slate-500">
+                <p className="rounded-lg border border-dashed border-line-strong px-3 py-6 text-center text-[12px] text-dim">
                   Everything accepted has a slot.
                 </p>
               ) : (
@@ -469,27 +469,27 @@ export default function Agenda() {
                     }
                     onClick={() => setPicked(picked === s.id ? null : s.id)}
                     className={[
-                      "cursor-grab rounded-lg border bg-white px-2.5 py-2 active:cursor-grabbing",
+                      "cursor-grab rounded-lg border bg-surface px-2.5 py-2 active:cursor-grabbing",
                       picked === s.id
-                        ? "border-indigo-500 ring-2 ring-indigo-200"
-                        : "border-slate-200 hover:border-slate-300",
+                        ? "border-accent-solid ring-2 ring-accent-ring"
+                        : "border-line hover:border-line-strong",
                     ].join(" ")}
                   >
                     <div className="flex items-center gap-1.5">
                       {s.trackColor && (
                         <span
-                          className="h-2 w-2 shrink-0 rounded-full"
-                          style={{ background: s.trackColor }}
+                          className="cb-dot h-2 w-2 shrink-0"
+                          style={{ ["--cb-hue"]: s.trackColor } as React.CSSProperties}
                         />
                       )}
-                      <span className="font-mono text-[11px] text-slate-400">
+                      <span className="font-mono text-[11px] text-faint">
                         {s.ref}
                       </span>
                     </div>
-                    <div className="mt-0.5 text-[12px] font-medium leading-tight text-slate-900">
+                    <div className="mt-0.5 text-[12px] font-medium leading-tight text-strong">
                       {s.title}
                     </div>
-                    <div className="mt-0.5 text-[11px] text-slate-500">
+                    <div className="mt-0.5 text-[11px] text-dim">
                       {s.format} · {durationFor(s.format)} min
                     </div>
                   </div>
@@ -497,7 +497,7 @@ export default function Agenda() {
               )}
             </div>
             {picked && (
-              <p className="mt-2 rounded-md bg-indigo-50 px-2 py-1.5 text-[11px] text-indigo-700">
+              <p className="mt-2 rounded-md bg-accent-soft px-2 py-1.5 text-[11px] text-accent-text">
                 Now click an empty slot in the grid.
               </p>
             )}
@@ -506,20 +506,20 @@ export default function Agenda() {
 
         <div className="min-w-0 flex-1">
           {view === "grid" && (
-            <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
+            <div className="overflow-x-auto rounded-lg border border-line bg-surface">
               <table className="w-full border-collapse">
                 <thead>
                   <tr>
-                    <th className="w-20 border-b border-r border-slate-200 bg-slate-50/80 px-2 py-1.5 text-left text-[11px] font-medium uppercase tracking-[0.06em] text-slate-500">
+                    <th className="w-20 border-b border-r border-line bg-subtle px-2 py-1.5 text-left text-[11px] font-medium uppercase tracking-[0.06em] text-dim">
                       Time
                     </th>
                     {roomList.map((r) => (
                       <th
                         key={r.id}
-                        className="border-b border-r border-slate-200 bg-slate-50/80 px-2 py-1.5 text-left text-[12px] font-medium text-slate-700 last:border-r-0"
+                        className="border-b border-r border-line bg-subtle px-2 py-1.5 text-left text-[12px] font-medium text-body last:border-r-0"
                       >
                         {r.name}
-                        <span className="ml-1 font-normal text-slate-400">
+                        <span className="ml-1 font-normal text-faint">
                           {r.capacity}
                         </span>
                       </th>
@@ -531,7 +531,7 @@ export default function Agenda() {
                     const slotMs = slotToUtcMs(day, hour, minute);
                     return (
                       <tr key={`${hour}:${minute}`}>
-                        <td className="border-b border-r border-slate-100 px-2 py-1 align-top text-[11px] tabular-nums text-slate-400">
+                        <td className="border-b border-r border-line-soft px-2 py-1 align-top text-[11px] tabular-nums text-faint">
                           {minute === 0 ? fmtTime(hour, minute) : ""}
                         </td>
                         {roomList.map((room) => {
@@ -560,7 +560,7 @@ export default function Agenda() {
                               <td
                                 key={room.id}
                                 rowSpan={span}
-                                className="border-b border-r border-slate-100 p-1 align-top last:border-r-0"
+                                className="border-b border-r border-line-soft p-1 align-top last:border-r-0"
                               >
                                 <div
                                   draggable
@@ -574,18 +574,20 @@ export default function Agenda() {
                                     )
                                   }
                                   className={[
-                                    "h-full cursor-grab rounded-md border-l-4 px-2 py-1.5 active:cursor-grabbing",
+                                    "cb-track-edge h-full cursor-grab rounded-md border-l-4 px-2 py-1.5 active:cursor-grabbing",
                                     bad
-                                      ? "bg-rose-50 ring-1 ring-rose-300"
-                                      : "bg-slate-50",
+                                      ? "bg-danger-soft ring-1 ring-danger-ring"
+                                      : "bg-subtle",
                                   ].join(" ")}
-                                  style={{
-                                    borderLeftColor:
-                                      starting.trackColor ?? "#94a3b8",
-                                  }}
+                                  style={
+                                    {
+                                      "--cb-hue":
+                                        starting.trackColor ?? "#94a3b8",
+                                    } as React.CSSProperties
+                                  }
                                 >
                                   <div className="flex items-start justify-between gap-1">
-                                    <span className="font-mono text-[10px] text-slate-400">
+                                    <span className="font-mono text-[10px] text-faint">
                                       {starting.ref}
                                     </span>
                                     <fetcher.Form method="post">
@@ -601,20 +603,20 @@ export default function Agenda() {
                                       />
                                       <button
                                         title="Remove from schedule"
-                                        className="text-[11px] leading-none text-slate-300 hover:text-rose-600"
+                                        className="text-[11px] leading-none text-faint hover:text-danger"
                                       >
                                         ×
                                       </button>
                                     </fetcher.Form>
                                   </div>
-                                  <div className="text-[12px] font-medium leading-tight text-slate-900">
+                                  <div className="text-[12px] font-medium leading-tight text-strong">
                                     {starting.title}
                                   </div>
-                                  <div className="mt-0.5 text-[11px] text-slate-500">
+                                  <div className="mt-0.5 text-[11px] text-dim">
                                     {starting.speakers.map((s) => s.name).join(", ")}
                                   </div>
                                   {bad && (
-                                    <div className="mt-1 text-[10px] font-medium text-rose-700">
+                                    <div className="mt-1 text-[10px] font-medium text-danger">
                                       Conflict
                                     </div>
                                   )}
@@ -646,10 +648,10 @@ export default function Agenda() {
                                 place(picked, s?.format ?? null, room.id, hour, minute);
                               }}
                               className={[
-                                "h-8 border-b border-r border-slate-100 last:border-r-0",
+                                "h-8 border-b border-r border-line-soft last:border-r-0",
                                 picked
-                                  ? "cursor-pointer bg-indigo-50/40 hover:bg-indigo-100"
-                                  : "hover:bg-slate-50",
+                                  ? "cursor-pointer bg-accent-soft hover:bg-accent-soft-strong"
+                                  : "hover:bg-subtle",
                               ].join(" ")}
                             />
                           );
@@ -663,9 +665,9 @@ export default function Agenda() {
           )}
 
           {view === "list" && (
-            <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+            <div className="overflow-hidden rounded-lg border border-line bg-surface">
               {onDay.length === 0 ? (
-                <p className="px-6 py-12 text-center text-[13px] text-slate-500">
+                <p className="px-6 py-12 text-center text-[13px] text-dim">
                   Nothing scheduled on this day yet.
                 </p>
               ) : (
@@ -676,25 +678,25 @@ export default function Agenda() {
                     return (
                       <div
                         key={s.id}
-                        className="flex items-center gap-3 border-b border-slate-100 px-4 py-2.5 last:border-0"
+                        className="flex items-center gap-3 border-b border-line-soft px-4 py-2.5 last:border-0"
                       >
-                        <span className="w-20 shrink-0 text-[12px] tabular-nums text-slate-500">
+                        <span className="w-20 shrink-0 text-[12px] tabular-nums text-dim">
                           {fmtTime(t.hour, t.minute)}
                         </span>
                         <span
-                          className="h-6 w-1 shrink-0 rounded"
-                          style={{ background: s.trackColor ?? "#94a3b8" }}
+                          className="cb-bar h-6 w-1 shrink-0 rounded"
+                          style={{ ["--cb-hue"]: s.trackColor ?? "#94a3b8" } as React.CSSProperties}
                         />
                         <div className="min-w-0 flex-1">
-                          <div className="text-[13px] font-medium text-slate-900">
+                          <div className="text-[13px] font-medium text-strong">
                             {s.title}
                           </div>
-                          <div className="text-[12px] text-slate-500">
+                          <div className="text-[12px] text-dim">
                             {s.roomName} · {s.speakers.map((x) => x.name).join(", ")}
                           </div>
                         </div>
                         {conflictIds.has(s.id) && (
-                          <span className="rounded bg-rose-50 px-1.5 py-0.5 text-[11px] font-medium text-rose-700">
+                          <span className="rounded bg-danger-soft px-1.5 py-0.5 text-[11px] font-medium text-danger">
                             Conflict
                           </span>
                         )}
@@ -711,9 +713,9 @@ export default function Agenda() {
                 (name) => (
                   <div
                     key={name}
-                    className="overflow-hidden rounded-lg border border-slate-200 bg-white"
+                    className="overflow-hidden rounded-lg border border-line bg-surface"
                   >
-                    <div className="border-b border-slate-100 bg-slate-50/80 px-4 py-2 text-[13px] font-medium">
+                    <div className="border-b border-line-soft bg-subtle px-4 py-2 text-[13px] font-medium">
                       {name}
                     </div>
                     {scheduled
@@ -724,19 +726,19 @@ export default function Agenda() {
                         return (
                           <div
                             key={s.id}
-                            className="flex gap-3 border-b border-slate-100 px-4 py-2 text-[13px] last:border-0"
+                            className="flex gap-3 border-b border-line-soft px-4 py-2 text-[13px] last:border-0"
                           >
-                            <span className="w-32 shrink-0 tabular-nums text-slate-500">
+                            <span className="w-32 shrink-0 tabular-nums text-dim">
                               {new Date(t.dayIso + "T12:00:00Z").toLocaleDateString(
                                 "en-US",
                                 { month: "short", day: "numeric" },
                               )}{" "}
                               {fmtTime(t.hour, t.minute)}
                             </span>
-                            <span className="flex-1 font-medium text-slate-900">
+                            <span className="flex-1 font-medium text-strong">
                               {s.title}
                             </span>
-                            <span className="text-slate-500">{s.roomName}</span>
+                            <span className="text-dim">{s.roomName}</span>
                           </div>
                         );
                       })}
@@ -747,14 +749,14 @@ export default function Agenda() {
           )}
 
           {view === "conflicts" && (
-            <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+            <div className="overflow-hidden rounded-lg border border-line bg-surface">
               {conflicts.length === 0 ? (
                 <div className="px-6 py-16 text-center">
-                  <div className="mx-auto mb-2 flex h-8 w-8 items-center justify-center rounded-full bg-emerald-500 text-white">
+                  <div className="mx-auto mb-2 flex h-8 w-8 items-center justify-center rounded-full bg-success-solid text-on-solid">
                     ✓
                   </div>
                   <p className="text-[14px] font-medium">No conflicts</p>
-                  <p className="mt-1 text-[13px] text-slate-500">
+                  <p className="mt-1 text-[13px] text-dim">
                     No double-booked rooms, no speaker clashes, everything inside
                     event hours.
                   </p>
@@ -763,17 +765,17 @@ export default function Agenda() {
                 conflicts.map((c, i) => (
                   <div
                     key={i}
-                    className="flex items-start gap-3 border-b border-slate-100 px-4 py-3 last:border-0"
+                    className="flex items-start gap-3 border-b border-line-soft px-4 py-3 last:border-0"
                   >
                     <span
                       className={[
                         "mt-1 h-2 w-2 shrink-0 rounded-full",
-                        c.kind === "track" ? "bg-amber-400" : "bg-rose-500",
+                        c.kind === "track" ? "bg-warn-solid" : "bg-danger-solid",
                       ].join(" ")}
                     />
                     <div>
-                      <div className="text-[13px] text-slate-900">{c.message}</div>
-                      <div className="mt-0.5 text-[11px] uppercase tracking-wide text-slate-400">
+                      <div className="text-[13px] text-strong">{c.message}</div>
+                      <div className="mt-0.5 text-[11px] uppercase tracking-wide text-faint">
                         {c.kind === "room"
                           ? "Room double booked"
                           : c.kind === "speaker"

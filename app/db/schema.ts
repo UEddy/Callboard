@@ -149,6 +149,8 @@ export const participants = sqliteTable("participants", {
   links: text("links", { mode: "json" }).$type<Record<string, string>>(),
   isEvaluator: integer("is_evaluator", { mode: "boolean" }).notNull().default(false),
   isAdmin: integer("is_admin", { mode: "boolean" }).notNull().default(false),
+  airtableRecordId: text("airtable_record_id"),
+  airtableSyncedAt: integer("airtable_synced_at", { mode: "timestamp" }),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 }, (t) => [uniqueIndex("participants_event_email_idx").on(t.eventId, t.email)]);
@@ -200,11 +202,33 @@ export const submissions = sqliteTable("submissions", {
   answers: text("answers", { mode: "json" }).$type<Record<string, unknown>>(),
   tagIds: text("tag_ids", { mode: "json" }).$type<string[]>(),
 
+  // Why this submission landed where it did. Denormalised on purpose:
+  // it is a record of what happened at submit time, so editing or
+  // deleting a rule later must not rewrite history.
+  routingTrail: text("routing_trail", { mode: "json" }).$type<
+    {
+      ruleId: string;
+      condition: string;
+      setTrack?: string;
+      addedTags?: string[];
+      plan?: string;
+      reviewers?: number;
+      notify?: string[];
+      appliedAt: string;
+    }[]
+  >(),
+
   // Scheduling
   roomId: text("room_id").references(() => rooms.id, { onDelete: "set null" }),
   startsAt: integer("starts_at", { mode: "timestamp" }),
   endsAt: integer("ends_at", { mode: "timestamp" }),
   isDraftSchedule: integer("is_draft_schedule", { mode: "boolean" }).notNull().default(true),
+
+  // Airtable mirror. The record id is what makes a push an update rather
+  // than a second row; synced_at is the high water mark a pull compares
+  // against to tell an Airtable edit from a local one.
+  airtableRecordId: text("airtable_record_id"),
+  airtableSyncedAt: integer("airtable_synced_at", { mode: "timestamp" }),
 
   submittedAt: integer("submitted_at", { mode: "timestamp" }),
   decidedAt: integer("decided_at", { mode: "timestamp" }),
@@ -331,7 +355,7 @@ export const emailTemplates = sqliteTable("email_templates", {
   subject: text("subject").notNull(),
   bodyHtml: text("body_html").notNull(),
   // on_submit | on_accept | on_decline | on_task_assigned
-  // | task_reminder | schedule_published | custom
+  // | task_reminder | schedule_published | magic_link | custom
   trigger: text("trigger").notNull().default("custom"),
   attachIcs: integer("attach_ics", { mode: "boolean" }).notNull().default(false),
   enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
@@ -356,6 +380,31 @@ export const emailLog = sqliteTable("email_log", {
   index("email_log_event_idx").on(t.eventId, t.createdAt),
   index("email_log_participant_idx").on(t.participantId),
 ]);
+
+// Integrations ---------------------------------------------------------------
+// One row per event per provider. D1 stays the source of truth; this is
+// only ever a mirror, so nothing here is required for the app to work.
+
+export const integrations = sqliteTable("integrations", {
+  id: id(),
+  eventId: text("event_id").notNull().references(() => events.id, { onDelete: "cascade" }),
+  provider: text("provider").notNull().default("airtable"),
+
+  apiKey: text("api_key"),
+  baseId: text("base_id"),
+  tableName: text("table_name"),
+  // Optional. Blank means speakers are only mirrored as a text column on
+  // the submission row rather than getting rows of their own.
+  speakersTableName: text("speakers_table_name"),
+
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(false),
+  lastPushAt: integer("last_push_at", { mode: "timestamp" }),
+  lastPullAt: integer("last_pull_at", { mode: "timestamp" }),
+  lastError: text("last_error"),
+
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+}, (t) => [uniqueIndex("integrations_event_provider_idx").on(t.eventId, t.provider)]);
 
 // Embeds --------------------------------------------------------------------
 

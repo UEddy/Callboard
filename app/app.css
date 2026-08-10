@@ -1,18 +1,527 @@
 @import "tailwindcss" source(".");
 
-@theme {
-  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
-    "Helvetica Neue", Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+/* ==================================================================== *
+ * Theme tokens.
+ *
+ * Both palettes are defined here, in full, and every surface in the app
+ * is painted from these names. Nothing uses a raw Tailwind colour and
+ * nothing uses a `dark:` variant, because the previous attempt at dark
+ * mode did exactly that and left white label text on white cards
+ * wherever a variant had been forgotten. If a colour is not in this
+ * file, it does not appear in the UI.
+ *
+ * Three blocks, in this order, so the toggle wins in both directions:
+ *   :root                       -> light, the complete palette
+ *   @media (prefers-color-scheme: dark) :root:not([data-theme="light"])
+ *                               -> system dark, when no cookie is set
+ *   :root[data-theme="dark"]    -> explicit dark, overrides the media query
+ *
+ * First visit has no cookie and therefore no data-theme attribute, so the
+ * media query decides and the server can render without knowing anything
+ * about the visitor. That is what makes it flash free.
+ * ==================================================================== */
+
+:root {
+  color-scheme: light;
+
+  /* Surfaces, back to front */
+  --cb-canvas: oklch(0.985 0.002 90);
+  --cb-surface: oklch(1 0 0);
+  --cb-subtle: oklch(0.975 0.004 250);
+  --cb-muted: oklch(0.955 0.006 250);
+  --cb-muted-strong: oklch(0.915 0.01 250);
+
+  /* Text */
+  --cb-strong: oklch(0.25 0.02 260);
+  --cb-body: oklch(0.42 0.02 260);
+  /* These two are the most used text colours in the app. Both are set to
+     the lightest value that still clears WCAG AA against the darkest
+     surface they land on (muted chips), not against white. */
+  --cb-mutedtext: oklch(0.53 0.02 260);
+  --cb-faint: oklch(0.63 0.02 260);
+
+  /* Lines */
+  --cb-line-soft: oklch(0.955 0.005 250);
+  --cb-line: oklch(0.925 0.007 250);
+  --cb-line-strong: oklch(0.875 0.01 250);
+
+  /* Accent */
+  --cb-accent: oklch(0.51 0.19 275);
+  --cb-accent-text: oklch(0.47 0.19 275);
+  --cb-accent-solid: oklch(0.58 0.2 275);
+  --cb-accent-soft: oklch(0.96 0.02 275);
+  --cb-accent-soft-strong: oklch(0.92 0.045 275);
+  --cb-accent-ring: oklch(0.9 0.05 275);
+
+  /* Inverted block: primary buttons, active nav pills */
+  --cb-invert-bg: oklch(0.27 0.02 260);
+  --cb-invert-bg-hover: oklch(0.38 0.02 260);
+  --cb-invert-fg: oklch(0.99 0 0);
+
+  /* Status: soft background, readable foreground, hairline ring */
+  --cb-success: oklch(0.52 0.13 160);
+  --cb-success-soft: oklch(0.96 0.03 160);
+  --cb-success-ring: oklch(0.85 0.06 160);
+  --cb-success-solid: oklch(0.63 0.15 160);
+
+  --cb-warn: oklch(0.52 0.12 75);
+  --cb-warn-soft: oklch(0.965 0.04 85);
+  --cb-warn-ring: oklch(0.86 0.08 85);
+  --cb-warn-solid: oklch(0.78 0.16 80);
+
+  --cb-danger: oklch(0.52 0.19 20);
+  --cb-danger-soft: oklch(0.965 0.02 20);
+  --cb-danger-ring: oklch(0.87 0.06 20);
+  --cb-danger-solid: oklch(0.62 0.22 20);
+
+  /* Shadow tuned per theme: a light-mode drop shadow is invisible on a
+     dark canvas, so dark leans on borders instead. */
+  /* Label colour for text on a saturated solid fill. Those fills are
+     mid-lightness in both palettes, so this stays dark in both. */
+  --cb-on-solid: oklch(0.17 0.03 160);
+
+  --cb-shadow: 0 1px 2px oklch(0.2 0.02 260 / 0.06),
+    0 1px 3px oklch(0.2 0.02 260 / 0.05);
 }
 
-/* Admin tooling ships light. Half-inherited dark mode was hiding label
-   text on white cards, and a producer's OS setting should not decide
-   whether they can read a form. */
-html {
-  color-scheme: light;
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+
+    --cb-canvas: oklch(0.19 0.012 265);
+    --cb-surface: oklch(0.238 0.014 265);
+    --cb-subtle: oklch(0.275 0.015 265);
+    --cb-muted: oklch(0.315 0.016 265);
+    --cb-muted-strong: oklch(0.375 0.018 265);
+
+    --cb-strong: oklch(0.97 0.004 265);
+    --cb-body: oklch(0.87 0.008 265);
+    --cb-mutedtext: oklch(0.73 0.012 265);
+    --cb-faint: oklch(0.62 0.014 265);
+
+    --cb-line-soft: oklch(0.3 0.015 265);
+    --cb-line: oklch(0.35 0.016 265);
+    --cb-line-strong: oklch(0.44 0.018 265);
+
+    --cb-accent: oklch(0.72 0.15 275);
+    --cb-accent-text: oklch(0.78 0.14 275);
+    --cb-accent-solid: oklch(0.62 0.19 275);
+    --cb-accent-soft: oklch(0.32 0.06 275);
+    --cb-accent-soft-strong: oklch(0.38 0.09 275);
+    --cb-accent-ring: oklch(0.45 0.12 275);
+
+    --cb-invert-bg: oklch(0.93 0.006 265);
+    --cb-invert-bg-hover: oklch(0.83 0.008 265);
+    --cb-invert-fg: oklch(0.2 0.015 265);
+
+    --cb-success: oklch(0.8 0.14 160);
+    --cb-success-soft: oklch(0.32 0.06 160);
+    --cb-success-ring: oklch(0.45 0.09 160);
+    --cb-success-solid: oklch(0.6 0.14 160);
+
+    --cb-warn: oklch(0.85 0.13 85);
+    --cb-warn-soft: oklch(0.33 0.055 75);
+    --cb-warn-ring: oklch(0.47 0.08 75);
+    --cb-warn-solid: oklch(0.75 0.15 80);
+
+    --cb-danger: oklch(0.78 0.15 20);
+    --cb-danger-soft: oklch(0.32 0.075 20);
+    --cb-danger-ring: oklch(0.46 0.12 20);
+    --cb-danger-solid: oklch(0.6 0.2 20);
+
+    --cb-on-solid: oklch(0.17 0.03 160);
+  --cb-shadow: 0 1px 2px oklch(0 0 0 / 0.4), 0 1px 3px oklch(0 0 0 / 0.3);
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --cb-canvas: oklch(0.19 0.012 265);
+  --cb-surface: oklch(0.238 0.014 265);
+  --cb-subtle: oklch(0.275 0.015 265);
+  --cb-muted: oklch(0.315 0.016 265);
+  --cb-muted-strong: oklch(0.375 0.018 265);
+
+  --cb-strong: oklch(0.97 0.004 265);
+  --cb-body: oklch(0.87 0.008 265);
+  --cb-mutedtext: oklch(0.73 0.012 265);
+  --cb-faint: oklch(0.62 0.014 265);
+
+  --cb-line-soft: oklch(0.3 0.015 265);
+  --cb-line: oklch(0.35 0.016 265);
+  --cb-line-strong: oklch(0.44 0.018 265);
+
+  --cb-accent: oklch(0.72 0.15 275);
+  --cb-accent-text: oklch(0.78 0.14 275);
+  --cb-accent-solid: oklch(0.62 0.19 275);
+  --cb-accent-soft: oklch(0.32 0.06 275);
+  --cb-accent-soft-strong: oklch(0.38 0.09 275);
+  --cb-accent-ring: oklch(0.45 0.12 275);
+
+  --cb-invert-bg: oklch(0.93 0.006 265);
+  --cb-invert-bg-hover: oklch(0.83 0.008 265);
+  --cb-invert-fg: oklch(0.2 0.015 265);
+
+  --cb-success: oklch(0.8 0.14 160);
+  --cb-success-soft: oklch(0.32 0.06 160);
+  --cb-success-ring: oklch(0.45 0.09 160);
+  --cb-success-solid: oklch(0.6 0.14 160);
+
+  --cb-warn: oklch(0.85 0.13 85);
+  --cb-warn-soft: oklch(0.33 0.055 75);
+  --cb-warn-ring: oklch(0.47 0.08 75);
+  --cb-warn-solid: oklch(0.75 0.15 80);
+
+  --cb-danger: oklch(0.78 0.15 20);
+  --cb-danger-soft: oklch(0.32 0.075 20);
+  --cb-danger-ring: oklch(0.46 0.12 20);
+  --cb-danger-solid: oklch(0.6 0.2 20);
+
+  --cb-on-solid: oklch(0.17 0.03 160);
+  --cb-shadow: 0 1px 2px oklch(0 0 0 / 0.4), 0 1px 3px oklch(0 0 0 / 0.3);
+}
+
+/* Expose the tokens as Tailwind colours, so `bg-surface`, `text-muted`,
+   `border-line` and friends are ordinary utilities that happen to be
+   theme aware. */
+@theme inline {
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+
+  --color-canvas: var(--cb-canvas);
+  --color-surface: var(--cb-surface);
+  --color-subtle: var(--cb-subtle);
+  --color-muted: var(--cb-muted);
+  --color-muted-strong: var(--cb-muted-strong);
+
+  --color-strong: var(--cb-strong);
+  --color-body: var(--cb-body);
+  --color-dim: var(--cb-mutedtext);
+  --color-faint: var(--cb-faint);
+
+  --color-line-soft: var(--cb-line-soft);
+  --color-line: var(--cb-line);
+  --color-line-strong: var(--cb-line-strong);
+
+  --color-accent: var(--cb-accent);
+  --color-accent-text: var(--cb-accent-text);
+  --color-accent-solid: var(--cb-accent-solid);
+  --color-accent-soft: var(--cb-accent-soft);
+  --color-accent-soft-strong: var(--cb-accent-soft-strong);
+  --color-accent-ring: var(--cb-accent-ring);
+
+  --color-invert: var(--cb-invert-bg);
+  --color-invert-hover: var(--cb-invert-bg-hover);
+  --color-invert-fg: var(--cb-invert-fg);
+
+  --color-success: var(--cb-success);
+  --color-success-soft: var(--cb-success-soft);
+  --color-success-ring: var(--cb-success-ring);
+  --color-success-solid: var(--cb-success-solid);
+
+  --color-warn: var(--cb-warn);
+  --color-warn-soft: var(--cb-warn-soft);
+  --color-warn-ring: var(--cb-warn-ring);
+  --color-warn-solid: var(--cb-warn-solid);
+
+  --color-danger: var(--cb-danger);
+  --color-danger-soft: var(--cb-danger-soft);
+  --color-danger-ring: var(--cb-danger-ring);
+
+  --color-on-solid: var(--cb-on-solid);
+  --color-danger-solid: var(--cb-danger-solid);
 }
 
 html,
 body {
-  @apply bg-stone-100 text-slate-900;
+  background-color: var(--cb-canvas);
+  color: var(--cb-strong);
+}
+
+/* Form controls get a themed background and text colour by default, not
+   by remembering to add one at each call site. A control that forgets is
+   the exact bug this rewrite exists to kill, so the safe value is the
+   default and any utility class still overrides it. */
+@layer base {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not(
+      [type="file"]
+    ),
+  select,
+  textarea {
+    background-color: var(--cb-surface);
+    color: var(--cb-strong);
+    border-color: var(--cb-line-strong);
+  }
+
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--cb-faint);
+  }
+
+  /* Native checkboxes and radios are painted by the UA; accent-color is
+     the only hook that does not break their glyphs. */
+  input[type="checkbox"],
+  input[type="radio"] {
+    accent-color: var(--cb-accent-solid);
+  }
+
+  option,
+  optgroup {
+    background-color: var(--cb-surface);
+    color: var(--cb-strong);
+  }
+
+  ::selection {
+    background-color: var(--cb-accent-soft-strong);
+    color: var(--cb-strong);
+  }
+}
+
+/* ==================================================================== *
+ * Component classes.
+ *
+ * The repeated clusters live here rather than being retyped per call
+ * site. A pill is three coordinated colours; getting one of the three
+ * wrong is how you end up with unreadable text, so they are declared
+ * together once.
+ * ==================================================================== */
+
+@layer components {
+  .cb-card {
+    background-color: var(--cb-surface);
+    border: 1px solid var(--cb-line);
+    border-radius: 0.5rem;
+  }
+
+  .cb-panel {
+    background-color: var(--cb-surface);
+    border: 1px solid var(--cb-line);
+    border-radius: 1rem;
+    box-shadow: var(--cb-shadow);
+  }
+
+  /* Inputs. Explicit background and text, because a UA default of white
+     on a dark form is the exact failure this rewrite exists to prevent. */
+  .cb-input {
+    background-color: var(--cb-surface);
+    color: var(--cb-strong);
+    border: 1px solid var(--cb-line-strong);
+    border-radius: 0.375rem;
+  }
+  .cb-input::placeholder {
+    color: var(--cb-faint);
+  }
+  .cb-input:focus {
+    outline: none;
+    border-color: var(--cb-accent-solid);
+    box-shadow: 0 0 0 3px var(--cb-accent-ring);
+  }
+  .cb-input:disabled {
+    background-color: var(--cb-muted);
+    color: var(--cb-mutedtext);
+  }
+  .cb-input[readonly] {
+    background-color: var(--cb-subtle);
+    color: var(--cb-mutedtext);
+  }
+  select.cb-input option {
+    background-color: var(--cb-surface);
+    color: var(--cb-strong);
+  }
+
+  .cb-btn {
+    border-radius: 0.375rem;
+    font-weight: 500;
+    border: 1px solid transparent;
+  }
+  .cb-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .cb-btn-primary {
+    background-color: var(--cb-invert-bg);
+    color: var(--cb-invert-fg);
+  }
+  .cb-btn-primary:hover:not(:disabled) {
+    background-color: var(--cb-invert-bg-hover);
+  }
+
+  .cb-btn-secondary {
+    background-color: var(--cb-surface);
+    color: var(--cb-body);
+    border-color: var(--cb-line-strong);
+  }
+  .cb-btn-secondary:hover:not(:disabled) {
+    background-color: var(--cb-subtle);
+    color: var(--cb-strong);
+  }
+
+  .cb-btn-ghost {
+    background-color: transparent;
+    color: var(--cb-mutedtext);
+  }
+  .cb-btn-ghost:hover:not(:disabled) {
+    background-color: var(--cb-muted);
+    color: var(--cb-strong);
+  }
+
+  .cb-btn-success {
+    background-color: var(--cb-success-solid);
+    color: oklch(0.16 0.02 160);
+  }
+  .cb-btn-success:hover:not(:disabled) {
+    filter: brightness(1.08);
+  }
+
+  .cb-btn-danger {
+    background-color: transparent;
+    color: var(--cb-mutedtext);
+  }
+  .cb-btn-danger:hover:not(:disabled) {
+    background-color: var(--cb-danger-soft);
+    color: var(--cb-danger);
+  }
+
+  /* Pills: background, foreground and ring always move together. */
+  .cb-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    border-radius: 0.25rem;
+    padding: 0.125rem 0.375rem;
+    font-size: 11px;
+    font-weight: 500;
+    box-shadow: inset 0 0 0 1px var(--cb-pill-ring, transparent);
+    background-color: var(--cb-pill-bg);
+    color: var(--cb-pill-fg);
+  }
+  .cb-pill-neutral {
+    --cb-pill-bg: var(--cb-muted);
+    --cb-pill-fg: var(--cb-body);
+    --cb-pill-ring: var(--cb-line);
+  }
+  .cb-pill-success {
+    --cb-pill-bg: var(--cb-success-soft);
+    --cb-pill-fg: var(--cb-success);
+    --cb-pill-ring: var(--cb-success-ring);
+  }
+  .cb-pill-warn {
+    --cb-pill-bg: var(--cb-warn-soft);
+    --cb-pill-fg: var(--cb-warn);
+    --cb-pill-ring: var(--cb-warn-ring);
+  }
+  .cb-pill-danger {
+    --cb-pill-bg: var(--cb-danger-soft);
+    --cb-pill-fg: var(--cb-danger);
+    --cb-pill-ring: var(--cb-danger-ring);
+  }
+  .cb-pill-accent {
+    --cb-pill-bg: var(--cb-accent-soft);
+    --cb-pill-fg: var(--cb-accent-text);
+    --cb-pill-ring: var(--cb-accent-ring);
+  }
+
+  /* Notices */
+  .cb-note {
+    border-radius: 0.5rem;
+    border: 1px solid var(--cb-note-ring);
+    background-color: var(--cb-note-bg);
+    color: var(--cb-note-fg);
+  }
+  .cb-note-warn {
+    --cb-note-bg: var(--cb-warn-soft);
+    --cb-note-ring: var(--cb-warn-ring);
+    --cb-note-fg: var(--cb-warn);
+  }
+  .cb-note-danger {
+    --cb-note-bg: var(--cb-danger-soft);
+    --cb-note-ring: var(--cb-danger-ring);
+    --cb-note-fg: var(--cb-danger);
+  }
+  .cb-note-success {
+    --cb-note-bg: var(--cb-success-soft);
+    --cb-note-ring: var(--cb-success-ring);
+    --cb-note-fg: var(--cb-success);
+  }
+  .cb-note-accent {
+    --cb-note-bg: var(--cb-accent-soft);
+    --cb-note-ring: var(--cb-accent-ring);
+    --cb-note-fg: var(--cb-accent-text);
+  }
+
+  /* Table header row */
+  .cb-thead {
+    background-color: var(--cb-subtle);
+    color: var(--cb-mutedtext);
+    border-bottom: 1px solid var(--cb-line);
+  }
+  .cb-row-hover:hover {
+    background-color: var(--cb-subtle);
+  }
+
+  /* ------------------------------------------------------------------ *
+   * Author-coloured items.
+   *
+   * Track and tag colours come from the database as light-mode hex. On a
+   * dark canvas a mid indigo as text on a translucent chip is unreadable,
+   * so the chip mixes toward the surface and the text mixes toward white.
+   * The call site only passes --cb-hue; the theme decides the treatment.
+   * ------------------------------------------------------------------ */
+  .cb-dot {
+    display: inline-block;
+    border-radius: 9999px;
+    background-color: var(--cb-hue, var(--cb-faint));
+  }
+  .cb-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    border-radius: 0.25rem;
+    padding: 0.125rem 0.375rem;
+    font-size: 11px;
+    font-weight: 500;
+    background-color: color-mix(in oklab, var(--cb-hue) 14%, transparent);
+    color: color-mix(in oklab, var(--cb-hue) 82%, var(--cb-strong));
+  }
+  .cb-bar {
+    background-color: var(--cb-hue, var(--cb-faint));
+  }
+  /* Agenda block: the track colour is a 4px edge, so it needs to stay
+     legible against the block fill rather than the page. */
+  .cb-track-edge {
+    border-left-color: var(--cb-hue, var(--cb-faint));
+  }
+}
+
+:root[data-theme="dark"] .cb-chip,
+:root[data-theme="dark"] .cb-dot,
+:root[data-theme="dark"] .cb-bar {
+  --cb-hue-adjusted: color-mix(in oklab, var(--cb-hue) 72%, white);
+}
+:root[data-theme="dark"] .cb-chip {
+  background-color: color-mix(in oklab, var(--cb-hue) 26%, transparent);
+  color: color-mix(in oklab, var(--cb-hue) 55%, white);
+}
+:root[data-theme="dark"] .cb-dot,
+:root[data-theme="dark"] .cb-bar {
+  background-color: color-mix(in oklab, var(--cb-hue) 80%, white);
+}
+:root[data-theme="dark"] .cb-track-edge {
+  border-left-color: color-mix(in oklab, var(--cb-hue) 80%, white);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .cb-chip {
+    background-color: color-mix(in oklab, var(--cb-hue) 26%, transparent);
+    color: color-mix(in oklab, var(--cb-hue) 55%, white);
+  }
+  :root:not([data-theme="light"]) .cb-dot,
+  :root:not([data-theme="light"]) .cb-bar {
+    background-color: color-mix(in oklab, var(--cb-hue) 80%, white);
+  }
+  :root:not([data-theme="light"]) .cb-track-edge {
+    border-left-color: color-mix(in oklab, var(--cb-hue) 80%, white);
+  }
 }

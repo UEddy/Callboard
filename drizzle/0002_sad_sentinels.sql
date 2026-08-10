@@ -1,0 +1,1 @@
+ALTER TABLE `submissions` ADD `routing_trail` text;

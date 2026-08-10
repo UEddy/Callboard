@@ -24,6 +24,13 @@
 			"database_id": "9d0c7ddd-7f4e-487d-ada8-12f2c6e894ef",
 		        "migrations_dir": "./drizzle"
                 }
+	],
+	"r2_buckets": [
+		{
+			"binding": "BUCKET",
+			"bucket_name": "callboard-uploads",
+			"preview_bucket_name": "callboard-uploads-preview"
+                }
 	]
 	/**
 	 * Smart Placement

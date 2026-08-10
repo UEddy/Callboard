@@ -248,11 +248,11 @@ export default function FormBuilder() {
   ) => (
     <section className="mb-8">
       <h2 className="text-[15px] font-semibold tracking-tight">{title}</h2>
-      <p className="mb-3 mt-0.5 text-[13px] text-slate-500">{blurb}</p>
+      <p className="mb-3 mt-0.5 text-[13px] text-dim">{blurb}</p>
 
-      <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+      <div className="overflow-hidden rounded-lg border border-line bg-surface">
         {list.length === 0 ? (
-          <p className="px-4 py-8 text-center text-[13px] text-slate-500">
+          <p className="px-4 py-8 text-center text-[13px] text-dim">
             No fields in this section yet. Add one below.
           </p>
         ) : (
@@ -263,7 +263,7 @@ export default function FormBuilder() {
             return (
               <div
                 key={f.id}
-                className="border-b border-slate-100 px-4 py-2.5 last:border-0"
+                className="border-b border-line-soft px-4 py-2.5 last:border-0"
               >
                 <div className="flex flex-wrap items-center gap-2">
                   <div className="flex flex-col">
@@ -273,7 +273,7 @@ export default function FormBuilder() {
                       <input type="hidden" name="dir" value="-1" />
                       <button
                         disabled={i === 0 || busy}
-                        className="px-1 text-[10px] leading-none text-slate-400 hover:text-slate-900 disabled:opacity-30"
+                        className="px-1 text-[10px] leading-none text-faint hover:text-strong disabled:opacity-30"
                         title="Move up"
                       >
                         ▲
@@ -285,7 +285,7 @@ export default function FormBuilder() {
                       <input type="hidden" name="dir" value="1" />
                       <button
                         disabled={i === list.length - 1 || busy}
-                        className="px-1 text-[10px] leading-none text-slate-400 hover:text-slate-900 disabled:opacity-30"
+                        className="px-1 text-[10px] leading-none text-faint hover:text-strong disabled:opacity-30"
                         title="Move down"
                       >
                         ▼
@@ -295,24 +295,24 @@ export default function FormBuilder() {
 
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-1.5">
-                      <span className="text-[13px] font-medium text-slate-900">
+                      <span className="text-[13px] font-medium text-strong">
                         {f.label}
                       </span>
                       {f.locked && (
                         <span
-                          className="rounded bg-slate-100 px-1 py-0.5 text-[10px] text-slate-500"
+                          className="rounded bg-muted px-1 py-0.5 text-[10px] text-dim"
                           title="Built in field, cannot be removed"
                         >
                           built in
                         </span>
                       )}
                       {rule?.showIf && (
-                        <span className="rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] font-medium text-indigo-700">
+                        <span className="rounded bg-accent-soft px-1.5 py-0.5 text-[10px] font-medium text-accent-text">
                           shows when {rule.showIf.fieldKey} = {rule.showIf.value}
                         </span>
                       )}
                     </div>
-                    <div className="text-[12px] text-slate-500">
+                    <div className="text-[12px] text-dim">
                       {f.type}
                       {Array.isArray(f.options) && f.options.length > 0 && (
                         <> · {f.options.length} options</>
@@ -332,8 +332,8 @@ export default function FormBuilder() {
                       className={[
                         "rounded-md px-2 py-1 text-[12px] font-medium",
                         f.required
-                          ? "bg-slate-900 text-white hover:bg-slate-700"
-                          : "border border-slate-300 text-slate-600 hover:bg-slate-50",
+                          ? "bg-invert text-invert-fg hover:bg-invert-hover"
+                          : "border border-line-strong text-body hover:bg-subtle",
                       ].join(" ")}
                     >
                       {f.required ? "Required" : "Optional"}
@@ -346,7 +346,7 @@ export default function FormBuilder() {
                       onClick={() =>
                         setOpenCond(openCond === f.id ? null : f.id)
                       }
-                      className="rounded-md border border-slate-300 px-2 py-1 text-[12px] text-slate-600 hover:bg-slate-50"
+                      className="rounded-md border border-line-strong px-2 py-1 text-[12px] text-body hover:bg-subtle"
                     >
                       Logic
                     </button>
@@ -356,7 +356,7 @@ export default function FormBuilder() {
                     <Form method="post">
                       <input type="hidden" name="intent" value="remove_field" />
                       <input type="hidden" name="fieldId" value={f.id} />
-                      <button className="rounded-md px-2 py-1 text-[12px] text-slate-400 hover:bg-rose-50 hover:text-rose-700">
+                      <button className="rounded-md px-2 py-1 text-[12px] text-faint hover:bg-danger-soft hover:text-danger">
                         Remove
                       </button>
                     </Form>
@@ -366,17 +366,17 @@ export default function FormBuilder() {
                 {openCond === f.id && (
                   <Form
                     method="post"
-                    className="mt-2 flex flex-wrap items-center gap-2 rounded-md bg-slate-50 px-3 py-2"
+                    className="mt-2 flex flex-wrap items-center gap-2 rounded-md bg-subtle px-3 py-2"
                   >
                     <input type="hidden" name="intent" value="set_condition" />
                     <input type="hidden" name="fieldId" value={f.id} />
-                    <span className="text-[12px] text-slate-600">
+                    <span className="text-[12px] text-body">
                       Only show this field when
                     </span>
                     <select
                       name="whenField"
                       defaultValue={rule?.showIf?.fieldKey ?? ""}
-                      className="rounded border border-slate-300 bg-white px-2 py-1 text-[12px]"
+                      className="rounded border border-line-strong bg-surface px-2 py-1 text-[12px]"
                     >
                       <option value="">nothing (always show)</option>
                       {conditionSources
@@ -387,14 +387,14 @@ export default function FormBuilder() {
                           </option>
                         ))}
                     </select>
-                    <span className="text-[12px] text-slate-600">is</span>
+                    <span className="text-[12px] text-body">is</span>
                     <input
                       name="whenValue"
                       defaultValue={rule?.showIf?.value ?? ""}
                       placeholder="Workshop (90 min)"
-                      className="w-52 rounded border border-slate-300 bg-white px-2 py-1 text-[12px]"
+                      className="w-52 rounded border border-line-strong bg-surface px-2 py-1 text-[12px]"
                     />
-                    <button className="rounded-md bg-slate-900 px-2 py-1 text-[12px] font-medium text-white hover:bg-slate-700">
+                    <button className="rounded-md bg-invert px-2 py-1 text-[12px] font-medium text-invert-fg hover:bg-invert-hover">
                       Save rule
                     </button>
                   </Form>
@@ -410,7 +410,7 @@ export default function FormBuilder() {
         <input type="hidden" name="step" value={step} />
         <select
           name="defId"
-          className="rounded-md border border-slate-300 bg-white px-2 py-1.5 text-[13px]"
+          className="rounded-md border border-line-strong bg-surface px-2 py-1.5 text-[13px]"
         >
           {library
             .filter((d) => !usedDefIds.has(d.id))
@@ -420,7 +420,7 @@ export default function FormBuilder() {
               </option>
             ))}
         </select>
-        <button className="rounded-md border border-slate-300 px-2.5 py-1.5 text-[13px] font-medium text-slate-700 hover:bg-slate-50">
+        <button className="rounded-md border border-line-strong px-2.5 py-1.5 text-[13px] font-medium text-body hover:bg-subtle">
           Add field
         </button>
       </Form>
@@ -429,31 +429,31 @@ export default function FormBuilder() {
 
   return (
     <div>
-      <div className="border-b border-slate-200 bg-white px-6 py-5">
+      <div className="border-b border-line bg-surface px-6 py-5">
         <div className="flex items-baseline justify-between">
           <div>
             <Link
               to="/admin/forms"
-              className="text-[12px] text-slate-500 underline-offset-2 hover:underline"
+              className="text-[12px] text-dim underline-offset-2 hover:underline"
             >
               Forms
             </Link>
             <h1 className="mt-0.5 text-[19px] font-semibold tracking-tight">
               {form.name}
             </h1>
-            <p className="mt-0.5 text-[13px] text-slate-500">
+            <p className="mt-0.5 text-[13px] text-dim">
               Public link:{" "}
               <a
                 href={`/submit/${form.publicSlug}`}
                 target="_blank"
                 rel="noreferrer"
-                className="font-mono text-indigo-700 underline underline-offset-2"
+                className="font-mono text-accent-text underline underline-offset-2"
               >
                 /submit/{form.publicSlug}
               </a>
             </p>
           </div>
-          <div className="rounded-md bg-slate-100 px-2 py-1 font-mono text-[11px] tabular-nums text-slate-500">
+          <div className="rounded-md bg-muted px-2 py-1 font-mono text-[11px] tabular-nums text-dim">
             {ms} ms
           </div>
         </div>
@@ -461,40 +461,40 @@ export default function FormBuilder() {
 
       {/* Preflight */}
       {warnings.length > 0 && (
-        <div className="mx-6 mt-4 rounded-lg border border-slate-200 bg-white">
-          <div className="border-b border-slate-100 px-4 py-2 text-[13px] font-medium">
+        <div className="mx-6 mt-4 rounded-lg border border-line bg-surface">
+          <div className="border-b border-line-soft px-4 py-2 text-[13px] font-medium">
             Before you publish
           </div>
-          <ul className="divide-y divide-slate-100">
+          <ul className="divide-y divide-line-soft">
             {warnings.map((w, i) => (
               <li key={i} className="flex gap-2 px-4 py-2.5 text-[13px]">
                 <span
                   className={[
                     "mt-0.5 h-2 w-2 shrink-0 rounded-full",
-                    w.level === "block" ? "bg-rose-500" : "bg-amber-400",
+                    w.level === "block" ? "bg-danger-solid" : "bg-warn-solid",
                   ].join(" ")}
                 />
                 <div>
-                  <div className="text-slate-900">{w.message}</div>
+                  <div className="text-strong">{w.message}</div>
                   {w.fix && (
-                    <div className="text-[12px] text-slate-500">{w.fix}</div>
+                    <div className="text-[12px] text-dim">{w.fix}</div>
                   )}
                 </div>
               </li>
             ))}
           </ul>
-          <div className="flex items-center gap-3 border-t border-slate-100 px-4 py-2.5">
+          <div className="flex items-center gap-3 border-t border-line-soft px-4 py-2.5">
             <Form method="post">
               <input type="hidden" name="intent" value="publish" />
               <button
                 disabled={blockers.length > 0 || busy}
-                className="rounded-md bg-slate-900 px-3 py-1.5 text-[13px] font-medium text-white hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-40"
+                className="rounded-md bg-invert px-3 py-1.5 text-[13px] font-medium text-invert-fg hover:bg-invert-hover disabled:cursor-not-allowed disabled:opacity-40"
               >
                 Publish form
               </button>
             </Form>
             {blockers.length > 0 && (
-              <span className="text-[12px] text-slate-500">
+              <span className="text-[12px] text-dim">
                 {blockers.length} thing{blockers.length > 1 ? "s" : ""} to fix
                 first
               </span>
@@ -520,13 +520,13 @@ export default function FormBuilder() {
         {/* Settings */}
         <section>
           <h2 className="text-[15px] font-semibold tracking-tight">Settings</h2>
-          <p className="mb-3 mt-0.5 text-[13px] text-slate-500">
+          <p className="mb-3 mt-0.5 text-[13px] text-dim">
             Deadline, limits, and what submitters read.
           </p>
 
           <Form
             method="post"
-            className="space-y-4 rounded-lg border border-slate-200 bg-white p-4"
+            className="space-y-4 rounded-lg border border-line bg-surface p-4"
           >
             <input type="hidden" name="intent" value="save_settings" />
 
@@ -535,7 +535,7 @@ export default function FormBuilder() {
               <input
                 name="name"
                 defaultValue={form.name}
-                className="mt-1 w-full max-w-md rounded-md border border-slate-300 px-2.5 py-1.5 text-[13px] focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
+                className="mt-1 w-full max-w-md rounded-md border border-line-strong px-2.5 py-1.5 text-[13px] focus:border-accent-solid focus:ring-2 focus:ring-accent-ring"
               />
             </label>
 
@@ -546,7 +546,7 @@ export default function FormBuilder() {
                   type="datetime-local"
                   name="closeAt"
                   defaultValue={toDateInput(form.closeAt)}
-                  className="mt-1 block rounded-md border border-slate-300 px-2.5 py-1.5 text-[13px]"
+                  className="mt-1 block rounded-md border border-line-strong px-2.5 py-1.5 text-[13px]"
                 />
               </label>
               <label className="block">
@@ -559,7 +559,7 @@ export default function FormBuilder() {
                   name="submissionLimit"
                   defaultValue={form.submissionLimit ?? ""}
                   placeholder="No limit"
-                  className="mt-1 block w-40 rounded-md border border-slate-300 px-2.5 py-1.5 text-[13px]"
+                  className="mt-1 block w-40 rounded-md border border-line-strong px-2.5 py-1.5 text-[13px]"
                 />
               </label>
             </div>
@@ -569,7 +569,7 @@ export default function FormBuilder() {
                 type="checkbox"
                 name="allowMultipleDrafts"
                 defaultChecked={form.allowMultipleDrafts}
-                className="h-4 w-4 rounded border-slate-300"
+                className="h-4 w-4 rounded border-line-strong"
               />
               <span className="text-[13px]">
                 Let people keep several drafts at once
@@ -581,14 +581,14 @@ export default function FormBuilder() {
                 type="checkbox"
                 name="collectParticipants"
                 defaultChecked={form.collectParticipants}
-                className="h-4 w-4 rounded border-slate-300"
+                className="h-4 w-4 rounded border-line-strong"
               />
               <span className="text-[13px]">Collect speaker details</span>
             </label>
 
             {/* Plain-English resolver for the settings that interact. */}
-            <div className="rounded-md bg-slate-50 px-3 py-2 text-[12px] text-slate-600">
-              <div className="mb-0.5 font-medium text-slate-900">
+            <div className="rounded-md bg-subtle px-3 py-2 text-[12px] text-body">
+              <div className="mb-0.5 font-medium text-strong">
                 What submitters will experience
               </div>
               {form.submissionLimit
@@ -608,7 +608,7 @@ export default function FormBuilder() {
                 name="welcomeHtml"
                 rows={3}
                 defaultValue={form.welcomeHtml ?? ""}
-                className="mt-1 w-full rounded-md border border-slate-300 px-2.5 py-1.5 font-mono text-[12px]"
+                className="mt-1 w-full rounded-md border border-line-strong px-2.5 py-1.5 font-mono text-[12px]"
               />
             </label>
 
@@ -620,13 +620,13 @@ export default function FormBuilder() {
                 name="successHtml"
                 rows={2}
                 defaultValue={form.successHtml ?? ""}
-                className="mt-1 w-full rounded-md border border-slate-300 px-2.5 py-1.5 font-mono text-[12px]"
+                className="mt-1 w-full rounded-md border border-line-strong px-2.5 py-1.5 font-mono text-[12px]"
               />
             </label>
 
             <button
               disabled={busy}
-              className="rounded-md bg-slate-900 px-3 py-1.5 text-[13px] font-medium text-white hover:bg-slate-700 disabled:opacity-50"
+              className="rounded-md bg-invert px-3 py-1.5 text-[13px] font-medium text-invert-fg hover:bg-invert-hover disabled:opacity-50"
             >
               {busy ? "Saving" : "Save settings"}
             </button>

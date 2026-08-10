@@ -1,79 +1,314 @@
-# Welcome to React Router!
+# Callboard
 
-A modern, production-ready template for building full-stack React applications using React Router.
+Callboard is an open source call for speakers and event programme management tool. It covers the whole arc of putting a conference programme together: you build a submission form, speakers submit through a public link without creating a password, a review committee scores what came in, you stage accept and decline decisions and send them as a batch with real calendar invites attached, you drag the accepted sessions onto a room grid that tells you when you have double booked a room or a person, and you chase speakers for headshots and slides from a dashboard that sorts the worst offenders to the top. It runs on Cloudflare Workers with a D1 database, so a full event fits inside free tier limits and deploys with one push.
 
-## Features
+## Screenshots
 
-- 🚀 Server-side rendering
-- ⚡️ Hot Module Replacement (HMR)
-- 📦 Asset bundling and optimization
-- 🔄 Data loading and mutations
-- 🔒 TypeScript by default
-- 🎉 TailwindCSS for styling
-- 📖 [React Router docs](https://reactrouter.com/)
+<!-- TODO: Admin submissions list, showing the status tabs and the "Not sent" flag -->
 
-## Getting Started
+<!-- TODO: Form builder, showing the publish preflight panel and the conditional logic row -->
 
-### Installation
+<!-- TODO: Public submission form, the proposal step with a conditional field visible -->
 
-Install the dependencies:
+<!-- TODO: Speaker portal, the task list with an overdue item -->
+
+<!-- TODO: Evaluation, the scoring queue with weighted criteria -->
+
+<!-- TODO: Evaluation results, the weighted ranking table -->
+
+<!-- TODO: Decisions, the accept queue and the recent mail log with sequence numbers -->
+
+<!-- TODO: Agenda, the room grid mid drag with a conflict highlighted -->
+
+<!-- TODO: Agenda conflicts tab -->
+
+<!-- TODO: Speaker onboarding dashboard, the task matrix sorted worst first -->
+
+## What it does
+
+The brief asked for six things. Here is where each one lives and what is actually built.
+
+### 1. Custom forms with conditional logic and routing
+
+`/admin/forms` and `/admin/forms/:formId`.
+
+Fields come from a per event library (`field_definitions`), so "Track" means the same thing on every form and reporting lines up across forms. A form pulls fields out of that library into two steps, the proposal itself and the speaker details. Each field can be made required, reordered, or removed, except locked system fields like title and email which can be reordered but not deleted.
+
+Conditional logic is set per field: "only show this field when Format is Workshop (90 min)". The rule is stored as JSON on the form field row and evaluated live in the browser as the submitter types, so the workshop prerequisites question appears the moment someone picks a workshop format and never appears for anyone else.
+
+Routing rules run at submit time, from both the public form and the API, through one shared implementation so the two cannot drift. A rule matches on any answer with `eq`, `neq`, `in`, or `contains`, and can set the track, attach tags, and send the submission to an evaluation plan with reviewers assigned. The demo event seeds three: workshops go to the workshop review plan, LLM Infra submissions get the infra track, and sponsor tagged submissions get the sponsor tag.
+
+Everything a rule does is recorded on the submission as a routing trail and shown on the submission detail page under "How it got here", in plain language: `Because Format is "Workshop (90 min)": sent to Workshop Review with 2 reviewers assigned`.
+
+### 2. Self-service speaker portal
+
+`/portal`.
+
+Speakers sign in with a magic link emailed to them, no password. Once in, they see every submission they are attached to with a plain language status ("Under review", not "accept_queue"), the scheduled time and room for anything accepted, a task list of everything still owed, and a profile form for the bio and headshot that end up on the website and in the emcee's notes.
+
+Headshots and slides are real uploads into R2, stored under `events/{eventId}/{participantId}/{filename}` and served back through `/files/...`. Images are capped at 5MB and documents at 25MB. Every upload also offers a paste-a-link alternative, because plenty of speakers keep slides in Drive or Notion and would rather send the link than a copy.
+
+### 3. Automated comms with real calendar invites
+
+`/admin/decisions`, with the mail machinery in `app/lib/email.ts`.
+
+Email templates are stored per event with `{{participant.firstName}}` style variables and a `{{#room}}...{{/room}}` block that only renders once a room exists. Acceptance emails carry an `.ics` calendar part built by hand to RFC 5545, sent with `METHOD:REQUEST` so Gmail and Outlook show native accept and decline buttons rather than an inert attachment.
+
+Sending is real, through Resend, when `RESEND_API_KEY` is set. When it is not set, nothing is faked: the send is recorded in the email log with status `queued`, and the Decisions page shows a banner saying email is not connected. Every send, real or queued, writes a row to `email_log` with the recipient, subject, template, status, any error, and the calendar sequence number.
+
+### 4. Evaluation and scoring
+
+`/admin/evaluation`.
+
+An evaluation plan defines weighted criteria on a configurable scale, and can be marked blind so evaluator screens hide the speaker's identity. The Review tab is a queue: one submission at a time, the criteria with their weights and descriptions beside it, and a count of how many are left. The Results tab ranks every submission by weighted average, normalised by the sum of the weights that were actually scored, and shows how many of the assigned reviews are complete. The Evaluators tab shows per reviewer progress and the recorded conflicts of interest.
+
+Auto-assign spreads unreviewed submissions across evaluators round robin, two reviewers each by default, skipping anyone with a recorded conflict.
+
+### 5. Drag and drop schedule with conflict detection
+
+`/admin/agenda`.
+
+A room by time grid, thirty minute slots, one tab per event day. Accepted sessions that have no slot sit in a tray on the left. Drag one onto the grid, or click it and then click the slot, which matters on a laptop trackpad and for anyone who cannot drag. Session length comes from the format, so a workshop lands as a ninety minute block and a lightning talk as ten minutes. Placed sessions can be dragged again to move them, or removed back to the tray.
+
+Four kinds of conflict are detected on every load and surfaced both as a red outline on the offending block and as a list in the Conflicts tab:
+
+- A room double booked.
+- A speaker scheduled in two places at once, including co-speakers on separate sessions.
+- Two sessions from the same track running at the same time in different rooms, flagged amber rather than red, because attendees having to choose is a judgement call rather than an error.
+- Anything falling outside event days or event hours.
+
+### 6. Real-time onboarding dashboard
+
+`/admin/onboarding`.
+
+A matrix of accepted speakers against onboarding tasks (headshot, bio, slides, recording release, travel confirmation), one coloured dot per cell, sorted worst first: most overdue items, then least complete, then alphabetically. Four counters across the top: accepted speakers, fully onboarded, speakers with overdue items, and total open items. Accepting a submission is what creates the task assignments, so the dashboard fills itself as decisions go out.
+
+### Beyond the brief: the public display layer
+
+`/e/:eventSlug`, with the views in `app/components/PublicViews.tsx` and the producer's side at `/admin/embeds`.
+
+Five views of the same programme: agenda grid, sessions list, schedule itinerary, speakers list, and speaker gallery. Each works as a standalone page with a view switcher and day and track filters, and each works inside an iframe with `?embed=1`, which strips the header, the switcher, and the footer so it sits inside a host page without looking bolted on.
+
+`/admin/embeds` turns a view into a saved configuration with its own public token. A producer picks the format, filters by track or day, toggles which fields show, and copies an iframe snippet. Because the snippet carries the token rather than the settings, changing the configuration later updates every page that embedded it without anyone editing HTML. Switching an embed off stops it rendering rather than quietly falling back to a default.
+
+The whole surface reads accepted submissions only, and no route in it reads a cookie, which is what makes it safe to cache at the edge: `s-maxage=300` with `stale-while-revalidate=3600`.
+
+### Beyond the brief: optional Airtable sync
+
+`/admin/integrations`, with the client in `app/lib/airtable.ts`.
+
+Producers already live in Airtable, so Callboard can mirror accepted sessions and speakers into a base and read producer edits back. D1 stays the primary datastore throughout: the integration is off by default, nothing in the app depends on it, and removing the key changes nothing about the data.
+
+Push upserts accepted sessions into a table you name, and speakers into a second table if you name one. Each submission stores its Airtable record id, so a second push updates the row instead of creating another one. Pull reads edits back for title, description, format, level, status, and track.
+
+Both directions are manual buttons. Nothing runs on a schedule.
+
+## Product decisions we made
+
+This is the section worth reading. Each of these is a small piece of judgement that the data model or the screen would not have forced on us.
+
+### Publish preflight that blocks a form before it can trap submitters
+
+A form builder will happily let you build a form nobody can complete. Before a form can be published, Callboard runs a preflight and separates blockers from warnings. Blockers stop the publish button outright: a close date already in the past, a dropdown or radio field with no options to choose from, no email field anywhere on the form, a per person submission limit below one. Warnings are advice and do not stop anything: more than twelve required fields, or no close date at all.
+
+Why: the failure mode we cared about is not the organiser being inconvenienced, it is a speaker halfway through a proposal hitting a field they cannot answer and giving up. That damage is invisible to the organiser, because the people it happens to never appear in the admin. Blocking at publish time is the only moment the software can catch it.
+
+### The plain English "what submitters will experience" resolver
+
+Three settings on a form interact in ways that are not obvious from three separate inputs: submissions per person, whether multiple drafts are allowed, and the close date. Under those controls sits a paragraph that reads the current values back in ordinary sentences, for example: "Each person can have 3 submissions on this form, drafts included. They can only have one draft in progress, and must finish or delete it before starting another. The form stops accepting entries on September 15, 2026."
+
+Why: event producers are not the people who wrote the settings. The resolver removes the need to reason about combinations of checkboxes, and it makes a wrong setting look wrong immediately rather than three weeks later in a support email. The same numbers are shown to submitters on the form's welcome step, so both sides are reading the same statement of the rules.
+
+### Magic links instead of passwords
+
+Speakers never set a password. The portal takes an email address, mints a single use token that expires in thirty minutes, and signs the person in when they follow it. The token is burned on use. Requesting a link for an unknown address returns exactly the same response as a known one, so the endpoint cannot be used to find out who submitted.
+
+Why: a speaker touches this system perhaps six times across a year. A password is pure friction and generates support load ("I can't log in") at exactly the moment you need slides. It also removes password storage from the project entirely, which is one fewer thing to get wrong in a tool other people will self host.
+
+The same reasoning drives what the screen says after you ask for a link. A known address, an unknown address, and an address whose email failed to send all produce the identical confirmation, because any difference between them turns the form into a way to test who is registered. Delivery failures go to the email log and the server logs, where the organiser can act on them, rather than to the visitor. The one exception is deliberate: with no mail provider configured, the link is rendered on the page so the flow can be exercised in development, and that state cannot occur once `RESEND_API_KEY` is set.
+
+### Conflict of interest blocking in evaluator auto-assignment
+
+Auto-assign hands submissions to reviewers round robin, but it checks the `evaluator_conflicts` table before each assignment and skips any pairing that is recorded there. It keeps cycling through the evaluator list until it has filled the reviewer count or run out of eligible people, rather than dropping the submission. The demo data includes a real case: Elena Novak and Sarah Chen both work at Vectorworks, so Elena cannot be assigned Sarah's session.
+
+Why: an accidental assignment is not something you can undo after the fact. Once a reviewer has read a proposal from their own company and scored it, the score is tainted whether or not anyone notices, and committee trust is the thing that makes a review process worth running at all. Filtering at assignment time is cheap; a review board arguing about a compromised score is not.
+
+### The nudge button with a 24-hour cooldown and a full email log
+
+Every speaker row with outstanding work has one Remind button, and there is a "Remind all" for everyone with open items. Pressing it stamps `last_nudged_at` on that speaker's incomplete tasks and writes a reminder row to the email log. The row then shows when the last nudge went out, in words ("today", "yesterday", "4d ago"), and anything inside the 24-hour window is highlighted amber with a tooltip saying to give them a moment.
+
+Why: chasing is the actual job in the last fortnight before an event, and the failure is not forgetting to chase, it is chasing the same person three times in a morning because two producers are both looking at the same spreadsheet. Making the last contact visible on the row is what prevents that. Note that the cooldown currently warns rather than hard blocks, on the reasoning that a producer sometimes genuinely does need to send twice in a day, and the email log keeps them honest about it.
+
+### The "Not sent" flag for decided but unnotified submissions
+
+A submission can be marked accepted or declined and have no email on record. The submissions table shows this as a red "Not sent" in the Notified column, and the Decisions page has a dedicated "Decided but never told" section with a Send now button per row.
+
+Why: this is the single worst failure this kind of software has. A speaker who was accepted three weeks ago and never told has already booked something else, and there is no recovering the slot. Because the state is derived (`decided_at` is set and `notified_at` is null) rather than a flag anyone has to maintain, it catches every cause: a send that failed, a batch that was interrupted, a status changed by hand in the database. It is loud on purpose.
+
+### Human readable refs like SESS-4
+
+Every submission gets a short sequential reference, `SESS-4` for sessions and `ABS-12` for abstracts, unique per event, allocated at draft creation. It appears on the submission list, the scheduling blocks, the evaluation screens, the speaker portal, the email templates, and the calendar invite filename.
+
+Why: UUIDs are correct and unusable. The people running an event talk to each other on the phone and in Slack, and "can you look at SESS-4" is a sentence a person can say. It also gives the speaker a reference they can quote back in an email, which is what makes the support thread resolvable.
+
+### ICS invites with a stable UID and an incrementing SEQUENCE
+
+The organiser's real workflow is that acceptances go out before the schedule is finalised, so the first invite often has a time but no room, and the room is filled in later. Calendar invites are built so that a later send updates the entry the speaker already has instead of adding a second one. Two things make that work: the UID is derived from the submission id and the event slug, so it is identical forever for that session and that speaker, and the SEQUENCE is computed from the highest sequence already recorded in the email log for that submission and incremented on every send. The sequence number is shown in the mail log so it is auditable.
+
+Why: the alternative is a speaker with two entries in their calendar, one of which is wrong, and no way for them to tell which. Getting UID and SEQUENCE right is the difference between a calendar invite that behaves like the ones people get from their own colleagues and one that behaves like spam. It costs nothing at build time and it is close to impossible to retrofit once the wrong invites have gone out.
+
+### Dark mode is a palette, not a pile of variants
+
+The previous attempt at dark mode was ad hoc `dark:` variants, and it shipped white label text on white cards wherever a variant had been forgotten. The rewrite makes that failure structurally impossible rather than fixing the instances. Both palettes are declared in full in `app/app.css` and exposed as ordinary Tailwind colour utilities, so `bg-surface` and `text-dim` are theme aware by construction. There is no `dark:` variant anywhere in the route files and no raw Tailwind colour either, which is a property you can check with one grep rather than by looking at screens. Form controls get a themed background from a base rule, so a control that forgets to declare one is still readable.
+
+The preference is a cookie read in the root loader, so the correct palette is in the first byte of HTML. With no cookie there is no `data-theme` attribute at all and the `prefers-color-scheme` media query decides, which is how the server renders the system preference correctly without knowing it. localStorage cannot do this: it is only readable after JavaScript runs, which is one paint too late.
+
+Author-supplied colours, the track and tag hues that come from the database as light-mode hex, are passed in as a custom property and mixed by the theme. On a dark canvas the chip mixes toward the surface and the label toward white, so a mid indigo track tag stays readable instead of disappearing.
+
+Why the fuss: the reason half-applied dark modes persist is that verifying them means opening every screen and squinting. Making every colour come from one file turns that into a static check, and the contrast of every pair the app actually renders is then arithmetic rather than opinion.
+
+### Routing writes down its reasons, in the submitter's language
+
+Routing is the feature most likely to make a producer distrust the tool, because a submission silently appears in a track nobody chose and there is nothing to inspect. So every rule that fires records what it matched and what it did, denormalised into a sentence at the moment it ran: `Because Format is "Workshop (90 min)": sent to Workshop Review with 2 reviewers assigned`. The trail is stored as text rather than as foreign keys, so editing or deleting a rule next month does not rewrite the history of why something landed where it did.
+
+Rules re-evaluate on every save of the proposal step, not just the first, because a submitter who switches from workshop to talk should not stay in the workshop queue. That has a consequence worth stating: re-routing removes review assignments for plans the submission is no longer routed to. It only ever removes assignments that routing itself created, which the previous trail identifies, so a producer's manual auto-assign is never undone, and it never removes an assignment that already has a score against it.
+
+Why: the two failure modes are opposite and both bad. Routing that never re-evaluates leaves submissions in queues that no longer make sense. Routing that re-evaluates carelessly deletes a reviewer's work. Reading the old trail is what lets it tell the difference between its own earlier decision and a human's.
+
+### Uploads are validated by their bytes, not by what the browser claims
+
+Uploaded files are served back from the app's own origin, which makes the upload path a security boundary rather than a convenience. Three rules follow. The Content-Type the browser sends is treated as a hint and never trusted: every file is checked against its magic bytes, and the extension has to agree with what the bytes say, so a text file renamed `headshot.png` is rejected with "that file is named .png but its contents are not a valid PNG file". The allowlist is limited to formats that cannot execute, which is why SVG is not accepted even though it is an image. And on the way back out, only real images are served inline, with everything else forced to download, plus `nosniff` and a restrictive CSP on every response.
+
+Filenames are sanitised down to a conservative character set, so `../../../../etc/passwd.png` is stored as `passwd.png` inside the participant's own prefix.
+
+Why: the naive version of this feature is four lines that write `file` to a bucket and hand back a URL, and it gives anyone who can reach the form a way to host arbitrary content on your domain. The failure is not that a speaker uploads something odd, it is that the file is then served from the same origin as the admin session. Sniffing the bytes and refusing to render anything inline costs almost nothing and closes that off. The size limits matter for a duller reason: a producer needs to know why an upload failed, and "that file is 6.0MB, the limit for images is 5.0MB" is a sentence they can act on without asking anyone.
+
+### Airtable sync keeps D1 authoritative, and says so when it overrules you
+
+The sync is two manual buttons, not a background job, and the conflict rule is decided per field rather than per record. On pull, a field is taken from Airtable only if the local row has not changed since the last push. If both sides changed, Callboard keeps its own value and lists what it ignored in the banner: "SESS-2 title: kept Sandboxing Agents, ignored Sandboxing Agents (Airtable edit)". Rows created directly in Airtable are counted and reported but never imported, because a submission needs a speaker, a form, and a ref, and inventing those from a spreadsheet row produces a record that breaks everything downstream. Scheduling, decisions, and evaluation are push only.
+
+Why: a two-way sync that silently picks a winner is worse than no sync, because you cannot tell whether the thing you are looking at is what you typed. Two rules make it trustworthy. The primary store wins ties, so there is always an answer to "which one is real". And every overruled edit is named on screen, so the producer who made it finds out immediately rather than discovering next week that their change evaporated. Keeping decisions and scheduling out of the pull path is the same instinct: an edit in a spreadsheet should not be able to send an acceptance email or move a session.
+
+## Stack and architecture
+
+- React Router v8 in framework mode, server side rendered, running as a Cloudflare Worker (`workers/app.ts` hands the Worker `env` and `ctx` to the router via a `RouterContextProvider`).
+- Cloudflare D1 as the database, accessed through Drizzle ORM. 24 tables, defined in `app/db/schema.ts`, with the migrations in `drizzle/`.
+- A public display layer at `/e/:eventSlug` with five views, embeddable in an iframe, cached at the edge and never reading a cookie.
+- Cloudflare R2 for speaker uploads, bound as `BUCKET`. Files go in under `events/{eventId}/{participantId}/{filename}` and come back out through the `/files/*` route.
+- Resend for outbound email. The ICS builder is hand written against RFC 5545 rather than pulled from a library, which is a few dozen lines and avoids a dependency that would have to run inside the Workers runtime.
+- Tailwind CSS v4, no component library. Both colour palettes are defined once in `app/app.css` as CSS variables and exposed as Tailwind colour utilities, so there is not a single `dark:` variant or raw Tailwind colour anywhere in the route files.
+- Every mutation is a plain HTML form posting to a route action, with an `intent` field selecting the operation. The agenda grid uses a fetcher so that dragging does not navigate. There is no client side data store and no API layer.
+
+Two structural choices are worth calling out. Submissions use hybrid storage: the six things the application reasons about (title, description, status, track, format, level) are real indexed columns, and everything else a custom form collects goes into a JSON `answers` column. That keeps filtering and sorting fast and indexable without limiting what a form can ask for. And loaders fan out into a fixed number of queries regardless of row count, fetching related speakers in one follow up query keyed by id rather than per row, so no page has an N+1.
+
+### Performance
+
+Measured locally against the built Worker (`wrangler dev --local`) with the demo seed loaded, warm, ten requests per page. Each page renders its own server timing in the corner of the header, which is where these come from.
+
+| Page | Server render | Queries |
+| --- | --- | --- |
+| `/portal` (signed out) | 6 to 18 ms | 1 |
+| `/admin/agenda` | 17 to 28 ms | 4 |
+| `/admin/onboarding` | 16 to 36 ms | 3 |
+| `/admin/forms` | 13 to 32 ms | 2 |
+| `/admin/submissions` | 18 to 32 ms | 4 |
+| `/admin/decisions` | 14 to 31 ms | 3 |
+| `/submit/cfp-2026` | 20 to 31 ms | 4 |
+| `/admin/evaluation?tab=results` | 23 to 43 ms | 6 |
+
+The query count is the page's own loader. Admin pages run one extra query in the shared layout, and the signed in portal runs five rather than one. None of these counts grow with the number of rows.
+
+End to end HTTP time on the same machine, including SSR and transfer: 24 to 49 ms for the submissions list, 49 to 70 ms for the agenda, 72 to 84 ms for the evaluation results. These are local numbers on a laptop against local D1, not production edge numbers, but they are honest and they are the same code path that runs deployed.
+
+Bundle sizes from `npm run build`: the Worker is 1040 KiB uncompressed across three modules, of which `index.js` is 50.6 kB (12.3 kB gzipped). Client assets total 476 kB uncompressed, split per route, with the largest route chunk at 12.9 kB (3.5 kB gzipped) and the shared client entry at 185.8 kB (58.6 kB gzipped).
+
+## Local setup
+
+Requires Node 22 and npm.
 
 ```bash
+git clone <your-fork-url> callboard
+cd callboard
 npm install
-```
 
-### Development
+# Create the local D1 tables
+npx wrangler d1 migrations apply callboard --local
 
-Start the development server with HMR:
+# Load the demo event: one conference, 14 submissions across every status,
+# 12 people, tasks in mixed states, scored evaluations, two planted schedule
+# conflicts, and email templates
+npx wrangler d1 execute callboard --local --file=./scripts/seed.sql
 
-```bash
+# Shift the seeded dates into the past relative to today, so submissions
+# read as "3d ago" rather than sitting in the future
+npx wrangler d1 execute callboard --local --file=./scripts/fix-dates.sql
+
 npm run dev
 ```
 
-Your application will be available at `http://localhost:5173`.
+The app comes up on `http://localhost:5173`. Start at `/admin/submissions` for the organiser side and `/submit/cfp-2026` for the public form. The seed is re-runnable: it deletes the demo event first and leaves anything else in the database alone.
 
-## Previewing the Production Build
+The two scripts in `scripts/` are deliberately outside `drizzle/`. Wrangler treats every `.sql` file in the migrations directory as a migration, so while they lived there, a routine `d1 migrations apply` would run the seed and wipe the event. Keep new helper scripts in `scripts/` and `drizzle/` for migrations only.
 
-Preview the production build locally:
+To send real email locally, create a `.dev.vars` file:
 
-```bash
-npm run preview
+```
+RESEND_API_KEY=re_your_key
+MAIL_FROM=Callboard <you@yourdomain.com>
 ```
 
-## Building for Production
+Without it everything still works, and sends are recorded in the log as queued rather than delivered.
 
-Create a production build:
+To run the production build locally instead of the dev server:
 
 ```bash
 npm run build
+npx wrangler dev --local
 ```
 
-## Deployment
+## Deploy
 
-Deployment is done using the Wrangler CLI.
+Deployment is a GitHub Actions workflow (`.github/workflows/deploy.yml`) that runs on every push to `main` and can also be triggered manually. It installs, builds, and runs `wrangler deploy`.
 
-To build and deploy directly to production:
+Set two repository secrets:
 
-```sh
-npm run deploy
+- `CLOUDFLARE_API_TOKEN`, with Workers Scripts edit and D1 edit permissions
+- `CLOUDFLARE_ACCOUNT_ID`
+
+Before the first deploy, create the remote database and point `wrangler.jsonc` at it:
+
+```bash
+npx wrangler d1 create callboard          # copy the returned database_id into wrangler.jsonc
+npx wrangler d1 migrations apply callboard --remote
+npx wrangler r2 bucket create callboard-uploads
+npx wrangler r2 bucket create callboard-uploads-preview
+npx wrangler secret put RESEND_API_KEY
+npx wrangler secret put MAIL_FROM
 ```
 
-To deploy a preview URL:
+`migrations apply --remote` runs schema migrations only. The demo seed lives in `scripts/` and is never applied automatically, so a deploy cannot overwrite a real event with demo data.
 
-```sh
-npx wrangler versions upload
-```
+`npm run deploy` does the same thing from a workstation.
 
-You can then promote a version to production after verification or roll it out progressively.
+## Known limitations
 
-```sh
-npx wrangler versions deploy
-```
+Stated plainly, because a judge will find them anyway.
 
-## Styling
+- **There is no authentication on `/admin`.** Anyone who can reach the URL can accept submissions and send email. The magic link and session tables exist and the speaker portal uses them; the admin side does not. This is the first thing to fix before anyone runs a real call for speakers on this.
+- **Uploaded files are reachable by anyone holding the URL.** Objects are served from `/files/...` with no authentication check, so a slide deck is protected only by its path being hard to guess. Headshots are meant to be public; slides are not. This needs signed URLs or a session check on the serving route.
+- **Batch email sending is sequential.** Committing a queue of decisions loops over submissions, then over speakers within each, awaiting each Resend call in turn. It is fine for the tens of emails a single event needs, and it will hit the Workers CPU limit on a batch of hundreds. It should be a queue.
+- **The event timezone is a fixed PDT offset.** The agenda grid, the portal, and the emails all use a hard coded `EVENT_UTC_OFFSET = -7`, which is correct for the demo event in San Francisco in October 2026 and wrong for everything else. The `timezone` column exists on the event and is not read. Any event that crosses a daylight saving boundary will render the wrong times.
 
-This template comes with [Tailwind CSS](https://tailwindcss.com/) already configured for a simple default starting experience. You can use whatever CSS framework you prefer.
+- **The Airtable key is stored in plain text in D1.** Combined with `/admin` having no authentication, anyone who can reach the admin URL can use the key. The page masks it on screen and never sends the saved value back to the browser, but that is UI hygiene, not protection. It belongs in Workers secrets or an encrypted column.
+- **Airtable sync is bounded by what one request can do.** It is sequential with a gap between calls to respect Airtable's five-per-second limit, and it caps at 2000 records a run. A few hundred sessions will be slow, and a very large base will hit the Workers CPU limit. It should be a queue.
 
----
+Also unfinished, in case it saves you clicking:
 
-Built with ❤️ using React Router.
+- Rule driven notifications are not sent. A routing rule can list addresses to notify, and the trail records that it wanted to, but no email goes out.
+- Conflicts of interest are stored and respected by the auto-assigner, but nothing detects them at submission time. The same company matches in the demo data were recorded by the seed.
+- Nothing rate limits the magic link form. A visitor can request links as fast as they can click, which is both a mail bill and a way to flood one inbox. It needs a per address cooldown.
+- `/` is still the React Router starter page, and `/admin` has no dashboard behind it. Four sidebar entries (Abstracts, Sessions, People, Tasks, Emails, Settings) are navigation targets with no route behind them yet.
+
+## Licence
+
+MIT. See `LICENSE`.
