@@ -1,0 +1,1 @@
+ALTER TABLE `forms` ADD `confirm_submitter` integer DEFAULT true NOT NULL;

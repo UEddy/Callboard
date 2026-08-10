@@ -3,7 +3,7 @@ import { Form, useLoaderData, useNavigation } from "react-router";
 import type { LoaderFunctionArgs, ActionFunctionArgs } from "react-router";
 import { redirect } from "react-router";
 import { and, eq, asc, sql } from "drizzle-orm";
-import { getDb, DEMO_EVENT_ID } from "~/db/client";
+import { getDb, DEMO_EVENT_ID, cloudflareContext } from "~/db/client";
 import {
   forms,
   formFields,
@@ -16,6 +16,7 @@ import {
 } from "~/db/schema";
 import { readSession, writeSession } from "~/lib/session";
 import { applyRoutingRules } from "~/lib/routing";
+import { sendSubmissionConfirmation } from "~/lib/notify";
 
 const STEPS = ["welcome", "account", "proposal", "speaker", "review"] as const;
 type Step = (typeof STEPS)[number];
@@ -286,6 +287,23 @@ export async function action({ context, request, params }: ActionFunctionArgs) {
       .update(submissions)
       .set({ status: "pending", submittedAt: new Date(), updatedAt: new Date() })
       .where(eq(submissions.id, session.submissionId));
+
+    // Acknowledge the submission. Deliberately after the status write and
+    // deliberately not awaited into the redirect's success: the proposal
+    // is already safe, so a mail problem must not show the submitter an
+    // error on a submission that went through.
+    if (session.participantId) {
+      await sendSubmissionConfirmation(
+        db,
+        context.get(cloudflareContext).env,
+        {
+          submissionId: session.submissionId,
+          participantId: session.participantId,
+          origin: new URL(request.url).origin,
+        },
+      );
+    }
+
     return redirect(`/submit/${slug}?step=done`, {
       headers: {
         "Set-Cookie": await writeSession({

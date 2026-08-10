@@ -54,6 +54,8 @@ Headshots and slides are real uploads into R2, stored under `events/{eventId}/{p
 
 Email templates are stored per event with `{{participant.firstName}}` style variables and a `{{#room}}...{{/room}}` block that only renders once a room exists. Acceptance emails carry an `.ics` calendar part built by hand to RFC 5545, sent with `METHOD:REQUEST` so Gmail and Outlook show native accept and decline buttons rather than an inert attachment.
 
+Submitters get a confirmation the moment they finish, from the public form and the API alike, carrying the reference, the title, the event name and a magic link straight into their portal. It is a per-form toggle in the form builder, on by default: a submitter who gets no acknowledgement assumes it failed and submits again, and the organiser reconciles the duplicate.
+
 Sending is real, through Resend, when `RESEND_API_KEY` is set. When it is not set, nothing is faked: the send is recorded in the email log with status `queued`, and the Decisions page shows a banner saying email is not connected. Every send, real or queued, writes a row to `email_log` with the recipient, subject, template, status, any error, and the calendar sequence number.
 
 ### 4. Evaluation and scoring
@@ -306,6 +308,7 @@ Also unfinished, in case it saves you clicking:
 
 - Rule driven notifications are not sent. A routing rule can list addresses to notify, and the trail records that it wanted to, but no email goes out.
 - Conflicts of interest are stored and respected by the auto-assigner, but nothing detects them at submission time. The same company matches in the demo data were recorded by the seed.
+- A Resend account in test mode can only send to its own owner. Confirmation and sign-in emails to real speakers will fail with a 403 until a sending domain is verified; the failure is recorded in the email log.
 - Nothing rate limits the magic link form. A visitor can request links as fast as they can click, which is both a mail bill and a way to flood one inbox. It needs a per address cooldown.
 - `/` is still the React Router starter page, and `/admin` has no dashboard behind it. Four sidebar entries (Abstracts, Sessions, People, Tasks, Emails, Settings) are navigation targets with no route behind them yet.
 

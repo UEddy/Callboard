@@ -129,6 +129,7 @@ export async function action({ context, request, params }: ActionFunctionArgs) {
         submissionLimit: limitRaw ? Number(limitRaw) : null,
         allowMultipleDrafts: fd.get("allowMultipleDrafts") === "on",
         collectParticipants: fd.get("collectParticipants") === "on",
+        confirmSubmitter: fd.get("confirmSubmitter") === "on",
         updatedAt: new Date(),
       })
       .where(eq(forms.id, formId));
@@ -585,6 +586,34 @@ export default function FormBuilder() {
               />
               <span className="text-[13px]">Collect speaker details</span>
             </label>
+
+            {/* Notifications */}
+            <div className="border-t border-line-soft pt-4">
+              <div className="text-[13px] font-medium">Notifications</div>
+              <label className="mt-2 flex items-start gap-2">
+                <input
+                  type="checkbox"
+                  name="confirmSubmitter"
+                  defaultChecked={form.confirmSubmitter}
+                  className="mt-0.5 h-4 w-4 rounded border-line-strong"
+                />
+                <span className="text-[13px]">
+                  Email submitters a confirmation
+                  <span className="block text-[12px] text-dim">
+                    Sent when they finish, with their reference and a link
+                    straight into the speaker portal. Turning this off means a
+                    submitter gets no acknowledgement at all, and the usual
+                    result is a duplicate submission a week later.
+                  </span>
+                </span>
+              </label>
+              {Array.isArray(form.adminNotifyNew) &&
+                form.adminNotifyNew.length > 0 && (
+                  <p className="mt-2 text-[12px] text-dim">
+                    New submissions also notify {form.adminNotifyNew.join(", ")}.
+                  </p>
+                )}
+            </div>
 
             {/* Plain-English resolver for the settings that interact. */}
             <div className="rounded-md bg-subtle px-3 py-2 text-[12px] text-body">

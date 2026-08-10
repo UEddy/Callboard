@@ -2,6 +2,7 @@ import type { LoaderFunctionArgs, ActionFunctionArgs } from "react-router";
 import { and, eq, inArray, asc, sql } from "drizzle-orm";
 import { getDb, cloudflareContext } from "~/db/client";
 import { applyRoutingRules, type RoutingEffect } from "~/lib/routing";
+import { sendSubmissionConfirmation } from "~/lib/notify";
 import {
   events,
   submissions,
@@ -510,6 +511,14 @@ async function handle(
         console.error("routing failed for", id, e);
       }
 
+      // And the same acknowledgement, so a speaker cannot tell whether
+      // the organiser typed their proposal in or posted it.
+      const confirmation = await sendSubmissionConfirmation(db, env, {
+        submissionId: id,
+        participantId: (person as { id: string }).id,
+        origin: new URL(request.url).origin,
+      });
+
       return json(
         {
           data: {
@@ -524,6 +533,9 @@ async function handle(
               evaluationPlan: r.plan,
               reviewersAssigned: r.reviewers,
             })),
+            confirmationEmail: confirmation.sent
+              ? { sent: true, simulated: confirmation.simulated }
+              : { sent: false, reason: confirmation.reason },
           },
         },
         { status: 201 },

@@ -359,8 +359,8 @@ INSERT INTO evaluator_conflicts (id, participant_id, submission_id, reason, auto
 
 INSERT INTO email_templates (id, event_id, key, name, subject, body_html, "trigger", attach_ics, enabled) VALUES
   ('et_confirm', 'evt_aiewf26', 'submission_confirmation', 'Submission Confirmation',
-   'We got your submission: {{submission.title}}',
-   '<p>Hi {{participant.firstName}},</p><p>Thanks for submitting <strong>{{submission.title}}</strong> to {{event.name}}. Your reference is {{submission.ref}}.</p><p>You can edit it any time from your speaker portal until {{form.closeAt}}.</p><p><a href="{{portalUrl}}">Open your speaker portal</a></p>',
+   'We have your submission: {{submission.title}}',
+   '<p>Hi {{participant.firstName}},</p><p>Thanks for submitting <strong>{{submission.title}}</strong> to {{event.name}}.</p><p>Your reference is <strong>{{submission.ref}}</strong>. Quote it if you need to get in touch about this proposal.</p><p><a href="{{magicLinkUrl}}">Open your speaker portal</a> to review or update it until {{form.closeAt}}. That link signs you in directly and works once, for {{expiresInHours}} hours. After that you can request a new one at {{portalUrl}}.</p>',
    'on_submit', 0, 1),
   ('et_accept', 'evt_aiewf26', 'acceptance', 'Acceptance',
    'You are speaking at {{event.name}}',

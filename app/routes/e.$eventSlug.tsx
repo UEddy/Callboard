@@ -1,4 +1,4 @@
-import { Link, useLoaderData, useSearchParams } from "react-router";
+import { data, Link, useLoaderData, useSearchParams } from "react-router";
 import type { LoaderFunctionArgs, HeadersFunction } from "react-router";
 import { getDb } from "~/db/client";
 import {
@@ -29,12 +29,15 @@ import { eq } from "drizzle-orm";
 const CACHE_SECONDS = 300;
 const STALE_SECONDS = 3600;
 
-export const headers: HeadersFunction = ({ loaderData, loaderHeaders }) => ({
+/* The loader sets Cache-Control for the cases that need a different one
+   (a retired embed gets a short cache so re-enabling it takes effect
+   quickly). HeadersArgs does not carry loaderData, so the loader has to
+   communicate through its own headers rather than the header function
+   inspecting the payload. */
+export const headers: HeadersFunction = ({ loaderHeaders }) => ({
   "Cache-Control":
     loaderHeaders.get("Cache-Control") ??
-    (loaderData?.retired
-      ? "public, max-age=30"
-      : `public, max-age=60, s-maxage=${CACHE_SECONDS}, stale-while-revalidate=${STALE_SECONDS}`),
+    `public, max-age=60, s-maxage=${CACHE_SECONDS}, stale-while-revalidate=${STALE_SECONDS}`,
   // Embedding is the point, so framing is allowed. The trade is that this
   // route must never render anything authenticated, which is enforced by
   // it never reading a session.
@@ -78,12 +81,12 @@ export async function loader({ context, params, request }: LoaderFunctionArgs) {
   }
 
   if (retired) {
-    return {
-      retired: true as const,
-      // Short cache: an embed that gets switched back on should come back
-      // quickly, and there is nothing here worth caching for long.
-      cacheSeconds: 30,
-    };
+    // Short cache: an embed switched back on should reappear quickly, and
+    // there is nothing here worth holding at the edge for five minutes.
+    return data(
+      { retired: true as const },
+      { headers: { "Cache-Control": "public, max-age=30" } },
+    );
   }
 
   const rawView = url.searchParams.get("view") ?? saved?.format ?? "agenda";
@@ -96,8 +99,8 @@ export async function loader({ context, params, request }: LoaderFunctionArgs) {
     url.searchParams.get("day") ??
     (typeof saved?.filters.day === "string" ? saved.filters.day : null);
 
-  const data = await loadPublicEvent(db, params.eventSlug!, { track, day });
-  if (!data) throw new Response("Event not found", { status: 404 });
+  const loaded = await loadPublicEvent(db, params.eventSlug!, { track, day });
+  if (!loaded) throw new Response("Event not found", { status: 404 });
 
   // Field toggles: saved config first, then per-parameter overrides.
   const fields = parseFields(saved?.fields ?? {});
@@ -113,7 +116,7 @@ export async function loader({ context, params, request }: LoaderFunctionArgs) {
 
   return {
     retired: false as const,
-    ...data,
+    ...loaded,
     view,
     fields,
     embed,

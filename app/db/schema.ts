@@ -98,6 +98,12 @@ export const forms = sqliteTable("forms", {
 
   adminNotifyNew: text("admin_notify_new", { mode: "json" }).$type<string[]>(),
   adminNotifyUpdate: text("admin_notify_update", { mode: "json" }).$type<string[]>(),
+  // Send the submitter a confirmation when they finish. On by default:
+  // a submitter who gets no acknowledgement assumes it failed and
+  // submits again, which costs the organiser a duplicate to reconcile.
+  confirmSubmitter: integer("confirm_submitter", { mode: "boolean" })
+    .notNull()
+    .default(true),
 
   createdAt: createdAt(),
   updatedAt: updatedAt(),
