@@ -239,6 +239,21 @@ body {
   color: var(--cb-strong);
 }
 
+/* Held on <html> for the two frames a theme switch takes. Colour
+   transitions in this app are scoped to interactive elements, so a
+   switch animates a handful of things rather than hundreds, but a single
+   `transition` added to a common element later would turn every theme
+   switch into a mass animation. This makes that impossible by
+   construction rather than by remembering. */
+.cb-theme-switching,
+.cb-theme-switching *,
+.cb-theme-switching *::before,
+.cb-theme-switching *::after {
+  transition: none !important;
+  animation-duration: 0s !important;
+  animation-delay: 0s !important;
+}
+
 /* Form controls get a themed background and text colour by default, not
    by remembering to add one at each call site. A control that forgets is
    the exact bug this rewrite exists to kill, so the safe value is the
