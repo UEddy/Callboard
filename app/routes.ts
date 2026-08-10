@@ -12,6 +12,8 @@ export default [
     index("routes/admin._index.tsx"),
     route("submissions", "routes/admin.submissions.tsx"),
     route("submissions/:id", "routes/admin.submissions.$id.tsx"),
+    route("abstracts", "routes/admin.abstracts.tsx"),
+    route("sessions", "routes/admin.sessions.tsx"),
     route("decisions", "routes/admin.decisions.tsx"),
     route("evaluation", "routes/admin.evaluation.tsx"),
     route("onboarding", "routes/admin.onboarding.tsx"),

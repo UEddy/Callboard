@@ -248,6 +248,32 @@ INSERT INTO submissions (id, event_id, form_id, ref, ref_seq, kind, title, descr
    '{"takeaways":"LoRA economics"}',
    NULL, NULL, NULL, NULL, 1, 1789344000, NULL, NULL);
 
+-- A second form and two abstracts, so /admin/abstracts has something in it
+-- and the kind scoping is visible rather than theoretical.
+
+INSERT INTO forms (
+  id, event_id, name, public_slug, kind, status, version, collect_participants,
+  welcome_html, success_html, close_at, submission_limit, allow_multiple_drafts,
+  participant_roles, participant_cap
+) VALUES (
+  'frm_abs26', 'evt_aiewf26', 'Call for Abstracts 2026', 'abstracts-2026',
+  'abstracts', 'open', 1, 1,
+  '<p>Pitch an idea in a paragraph. We will help you shape it into a session.</p>',
+  '<p>Got it. We read abstracts in batches every fortnight.</p>',
+  1789491540, 5, 1,
+  '[{"role":"Speaker","min":1,"max":2}]', 2
+);
+
+INSERT INTO submissions (id, event_id, form_id, ref, ref_seq, kind, title, description, status, track_id, format, level, answers, tag_ids, is_draft_schedule, submitted_at) VALUES
+  ('sub_a1', 'evt_aiewf26', 'frm_abs26', 'ABS-1', 101, 'abstracts',
+   'Something About Vector Index Maintenance',
+   '<p>Rough idea: nobody talks about what happens to an index six months in. I have numbers.</p>',
+   'pending', 'trk_infra', NULL, NULL, '{}', NULL, 1, 1789257600),
+  ('sub_a2', 'evt_aiewf26', 'frm_abs26', 'ABS-2', 102, 'abstracts',
+   'Teaching Non Engineers To Read Evals',
+   '<p>Half formed. Our PMs could not read our eval dashboards, so we rebuilt them.</p>',
+   'accept_queue', 'trk_evals', NULL, NULL, '{}', NULL, 1, 1789344000);
+
 -- Speakers on submissions ---------------------------------------------------
 
 INSERT INTO submission_participants (id, submission_id, participant_id, role, sort_order, is_primary) VALUES
@@ -265,7 +291,9 @@ INSERT INTO submission_participants (id, submission_id, participant_id, role, so
   ('sp_12', 'sub_11', 'p_bergman', 'Speaker', 0, 1),
   ('sp_13', 'sub_12', 'p_lindqvist', 'Speaker', 0, 1),
   ('sp_14', 'sub_13', 'p_ferreira', 'Speaker', 0, 1),
-  ('sp_15', 'sub_14', 'p_torres', 'Speaker', 0, 1);
+  ('sp_15', 'sub_14', 'p_torres', 'Speaker', 0, 1),
+  ('sp_16', 'sub_a1', 'p_bergman', 'Speaker', 0, 1),
+  ('sp_17', 'sub_a2', 'p_novak', 'Speaker', 0, 1);
 
 -- Onboarding tasks ----------------------------------------------------------
 

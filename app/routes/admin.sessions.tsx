@@ -5,7 +5,7 @@ import { loadSubmissionList, setSubmissionStatus } from "~/lib/submission-list";
 import { SubmissionsList } from "~/components/SubmissionsList";
 
 export async function loader({ context, request }: LoaderFunctionArgs) {
-  return loadSubmissionList(getDb(context), request, null);
+  return loadSubmissionList(getDb(context), request, "sessions");
 }
 
 export async function action({ context, request }: ActionFunctionArgs) {
@@ -18,13 +18,13 @@ export async function action({ context, request }: ActionFunctionArgs) {
   );
 }
 
-export default function Submissions() {
+export default function Sessions() {
   return (
     <SubmissionsList
       data={useLoaderData<typeof loader>()}
-      title="Submissions"
-      blurb="Everything submitted to this event. Decisions stage in a queue before anything is sent."
-      basePath="/admin/submissions"
+      title="Sessions"
+      blurb="Full session proposals. Same tabs, search and filters as the full list."
+      basePath="/admin/sessions"
     />
   );
 }
