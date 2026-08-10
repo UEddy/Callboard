@@ -89,6 +89,8 @@ Four kinds of conflict are detected on every load and surfaced both as a red out
 
 `/admin/onboarding`.
 
+The tasks themselves are defined at /admin/tasks: name, description, kind, who they apply to (all accepted speakers, one track, or one role), due date and whether they are required, with reordering. Creating a task generates its assignments immediately, one per person rather than one per submission, so a speaker with two accepted sessions still owes one headshot.
+
 A matrix of accepted speakers against onboarding tasks (headshot, bio, slides, recording release, travel confirmation), one coloured dot per cell, sorted worst first: most overdue items, then least complete, then alphabetically. Four counters across the top: accepted speakers, fully onboarded, speakers with overdue items, and total open items. Accepting a submission is what creates the task assignments, so the dashboard fills itself as decisions go out.
 
 ### Beyond the brief: the dashboard

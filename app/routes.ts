@@ -19,6 +19,7 @@ export default [
     route("onboarding", "routes/admin.onboarding.tsx"),
     route("forms", "routes/admin.forms.tsx"),
     route("library", "routes/admin.library.tsx"),
+    route("tasks", "routes/admin.tasks.tsx"),
     route("forms/:formId", "routes/admin.forms.$formId.tsx"),
     route("agenda", "routes/admin.agenda.tsx"),
     route("integrations", "routes/admin.integrations.tsx"),
