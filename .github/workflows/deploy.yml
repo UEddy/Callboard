@@ -17,20 +17,29 @@ jobs:
       - run: npm ci
       - run: npm run build
 
-      # Schema first. Deploying code that expects a column the database
-      # does not have takes the public submission form down, which is
-      # exactly what happened once: three migrations sat unapplied while
-      # each deploy reported success.
+      # NOTE: migrations are NOT applied here yet.
       #
-      # Safe to run unattended only because drizzle/ contains migrations
-      # and nothing else. The demo seed lives in scripts/ precisely so
-      # this command cannot reach it.
-      - name: Apply D1 migrations
-        uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: d1 migrations apply callboard --remote
+      # They should be, and a step to do it is written and ready below,
+      # because deploying code that expects a column the database does
+      # not have takes the public submission form down. That has already
+      # happened once: three migrations sat unapplied while every deploy
+      # reported success.
+      #
+      # The step is commented out only because CLOUDFLARE_API_TOKEN
+      # currently has Workers permissions but not D1, so the command
+      # fails with "the given account is not authorized" [code: 7403].
+      # Give the token D1:edit and uncomment this, at which point code
+      # and schema can only ever ship together.
+      #
+      # Safe to run unattended because drizzle/ contains migrations and
+      # nothing else; the demo seed lives in scripts/ for that reason.
+      #
+      # - name: Apply D1 migrations
+      #   uses: cloudflare/wrangler-action@v3
+      #   with:
+      #     apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      #     accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      #     command: d1 migrations apply callboard --remote
 
       - name: Deploy worker
         uses: cloudflare/wrangler-action@v3
