@@ -7,6 +7,7 @@ import {
   statusLabel,
 } from "~/lib/submission-list";
 import { dualTimeText, fmtDateIn } from "~/lib/tz";
+import { OptionsMenu } from "~/components/OptionsMenu";
 
 /* ------------------------------------------------------------------ *
  * The submissions table, shared by all three scoped lists.
@@ -140,11 +141,13 @@ export function SubmissionsList({
   title,
   blurb,
   basePath,
+  source,
 }: {
   data: ListData;
   title: string;
   blurb: string;
   basePath: string;
+  source: "submissions" | "abstracts" | "sessions";
 }) {
   const {
     rows,
@@ -169,11 +172,28 @@ export function SubmissionsList({
             <h1 className="text-[19px] font-semibold tracking-tight">{title}</h1>
             <p className="mt-0.5 text-[13px] text-dim">{blurb}</p>
           </div>
-          <div
-            className="rounded-md bg-muted px-2 py-1 font-mono text-[11px] tabular-nums text-dim"
-            title="Server render time for this page"
-          >
-            {ms} ms
+          <div className="flex items-center gap-2">
+            <OptionsMenu
+              source={source}
+              rowCount={rows.length}
+              scopeNote={
+                [
+                  TABS.find((t) => t.key === tabKey)?.label ?? "All",
+                  q ? `matching "${q}"` : null,
+                  trackFilter
+                    ? `in ${trackList.find((t) => t.id === trackFilter)?.name ?? "a track"}`
+                    : null,
+                ]
+                  .filter(Boolean)
+                  .join(", ") + ". Exactly what is on screen."
+              }
+            />
+            <div
+              className="rounded-md bg-muted px-2 py-1 font-mono text-[11px] tabular-nums text-dim"
+              title="Server render time for this page"
+            >
+              {ms} ms
+            </div>
           </div>
         </div>
 

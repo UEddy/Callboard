@@ -24,6 +24,7 @@ export default function Submissions() {
       data={useLoaderData<typeof loader>()}
       title="Submissions"
       blurb="Everything submitted to this event. Decisions stage in a queue before anything is sent."
+      source="submissions"
       basePath="/admin/submissions"
     />
   );

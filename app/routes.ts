@@ -24,5 +24,6 @@ export default [
     route("integrations", "routes/admin.integrations.tsx"),
     route("embeds", "routes/admin.embeds.tsx"),
     route("settings", "routes/admin.settings.tsx"),
+    route("export", "routes/admin.export.tsx"),
   ]),
 ] satisfies RouteConfig;

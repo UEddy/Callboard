@@ -26,6 +26,7 @@ import {
 import { safeZone } from "~/lib/tz";
 import { readViewerZone } from "~/lib/viewer-tz";
 import { EventTime } from "~/components/EventTime";
+import { OptionsMenu } from "~/components/OptionsMenu";
 
 /* --- Loader -------------------------------------------------------- */
 
@@ -287,6 +288,23 @@ export default function Agenda() {
                 {conflicts.length} conflict{conflicts.length > 1 ? "s" : ""}
               </span>
             )}
+            <OptionsMenu
+              source="agenda"
+              rowCount={
+                view === "conflicts"
+                  ? new Set(conflicts.flatMap((c) => c.submissionIds)).size
+                  : view === "grid" || view === "list"
+                    ? onDay.length
+                    : scheduled.length
+              }
+              scopeNote={
+                view === "conflicts"
+                  ? "Only the sessions involved in a conflict."
+                  : view === "grid" || view === "list"
+                    ? `Scheduled sessions on the selected day.`
+                    : "Every scheduled session."
+              }
+            />
             <span className="rounded-md bg-muted px-2 py-1 font-mono text-[11px] tabular-nums text-dim">
               {ms} ms
             </span>

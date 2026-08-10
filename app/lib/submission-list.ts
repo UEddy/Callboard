@@ -13,6 +13,7 @@ import { DEMO_EVENT_ID } from "~/db/client";
 import {
   events,
   participants,
+  rooms,
   submissionParticipants,
   submissions,
   tracks,
@@ -129,12 +130,16 @@ export async function loadSubmissionList(
       level: submissions.level,
       trackName: tracks.name,
       trackColor: tracks.color,
+      roomName: rooms.name,
+      startsAt: submissions.startsAt,
+      endsAt: submissions.endsAt,
       submittedAt: submissions.submittedAt,
       notifiedAt: submissions.notifiedAt,
       decidedAt: submissions.decidedAt,
     })
     .from(submissions)
     .leftJoin(tracks, eq(submissions.trackId, tracks.id))
+    .leftJoin(rooms, eq(submissions.roomId, rooms.id))
     .where(where)
     .orderBy(desc(submissions.refSeq));
 

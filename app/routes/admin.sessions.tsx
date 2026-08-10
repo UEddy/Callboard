@@ -24,6 +24,7 @@ export default function Sessions() {
       data={useLoaderData<typeof loader>()}
       title="Sessions"
       blurb="Full session proposals. Same tabs, search and filters as the full list."
+      source="sessions"
       basePath="/admin/sessions"
     />
   );

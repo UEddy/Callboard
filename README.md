@@ -38,7 +38,7 @@ Conditional logic is set per field: "only show this field when Format is Worksho
 
 Routing rules run at submit time, from both the public form and the API, through one shared implementation so the two cannot drift. A rule matches on any answer with `eq`, `neq`, `in`, or `contains`, and can set the track, attach tags, and send the submission to an evaluation plan with reviewers assigned. The demo event seeds three: workshops go to the workshop review plan, LLM Infra submissions get the infra track, and sponsor tagged submissions get the sponsor tag.
 
-The same list is served three ways: /admin/submissions for everything, /admin/abstracts and /admin/sessions scoped by submission kind, all from one implementation so the scoped views cannot drift. Status is editable inline from the pill on any of them, saved optimistically. Nothing on these screens sends email.
+The same list is served three ways: /admin/submissions for everything, /admin/abstracts and /admin/sessions scoped by submission kind, all from one implementation so the scoped views cannot drift. Status is editable inline from the pill on any of them, saved optimistically. Nothing on these screens sends email. An Options menu on each list, and on the agenda, exports exactly the rows on screen as CSV or XLSX, carrying the active tab, search and filters into the export.
 
 Everything a rule does is recorded on the submission as a routing trail and shown on the submission detail page under "How it got here", in plain language: `Because Format is "Workshop (90 min)": sent to Workshop Review with 2 reviewers assigned`.
 

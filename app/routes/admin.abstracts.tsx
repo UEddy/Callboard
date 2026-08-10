@@ -24,6 +24,7 @@ export default function Abstracts() {
       data={useLoaderData<typeof loader>()}
       title="Abstracts"
       blurb="Early stage ideas submitted as abstracts. Same tabs, search and filters as the full list."
+      source="abstracts"
       basePath="/admin/abstracts"
     />
   );
