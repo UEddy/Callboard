@@ -766,7 +766,7 @@ export default function Emails() {
                         </span>
                       ) : (
                         <span className="text-faint" title="No calendar invite attached">
-                          —
+                          -
                         </span>
                       )}
                     </td>
@@ -1096,7 +1096,7 @@ function Composer({
                   <optgroup key={group} label={`${group} (${inGroup.length})`}>
                     {inGroup.map((r) => (
                       <option key={r.id} value={r.id}>
-                        {r.name} — {r.email}
+                        {r.name} ({r.email})
                       </option>
                     ))}
                   </optgroup>

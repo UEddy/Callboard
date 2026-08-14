@@ -22,6 +22,11 @@ import { render, sendEmail } from "~/lib/email";
 import { mergeVars, usesMagicLink } from "~/lib/emails";
 import { mintSignInLink } from "~/lib/people";
 import { fmtDateIn, safeZone } from "~/lib/tz";
+import {
+  COOLDOWN_WARNING,
+  agoLabel,
+  recentlyNudged,
+} from "~/lib/nudge";
 
 /* ------------------------------------------------------------------ *
  * The screen a producer lives in during the two weeks before an event:
@@ -29,9 +34,35 @@ import { fmtDateIn, safeZone } from "~/lib/tz";
  * Sorted worst first, because that is the only order that matters.
  * ------------------------------------------------------------------ */
 
-const NUDGE_COOLDOWN_HOURS = 24;
+/* The three states a producer sorts this board into. "Incomplete" is the
+   working set, "overdue" is the subset that is already late, and
+   "complete" is the one you check to see who you can stop chasing. */
+const FILTERS = [
+  { key: "all", label: "Everyone" },
+  { key: "incomplete", label: "Incomplete" },
+  { key: "overdue", label: "Overdue" },
+  { key: "complete", label: "Complete" },
+] as const;
 
-export async function loader({ context }: LoaderFunctionArgs) {
+type FilterKey = (typeof FILTERS)[number]["key"];
+
+function matchesFilter(
+  row: { done: number; total: number; overdue: number },
+  key: FilterKey,
+) {
+  switch (key) {
+    case "incomplete":
+      return row.done < row.total;
+    case "overdue":
+      return row.overdue > 0;
+    case "complete":
+      return row.total > 0 && row.done === row.total;
+    default:
+      return true;
+  }
+}
+
+export async function loader({ context, request }: LoaderFunctionArgs) {
   const started = Date.now();
   const db = getDb(context);
 
@@ -130,8 +161,13 @@ export async function loader({ context }: LoaderFunctionArgs) {
       const status = a?.status ?? "not_started";
       const due = t.dueAt ? new Date(t.dueAt).getTime() : null;
       const isDone = status === "complete" || status === "waived";
+      /* Two ways to be late: the due date has passed, or somebody
+         recorded the assignment as overdue outright. The cell already
+         went red for the second one while the counter ignored it, so the
+         dot and the number disagreed. They read the same rule now, which
+         is also what the Overdue filter needs to be worth clicking. */
       const overdue =
-        !isDone && due !== null && due < now && status !== "waived";
+        !isDone && ((due !== null && due < now) || status === "overdue");
 
       row.cells.push({
         taskId: t.id,
@@ -161,14 +197,53 @@ export async function loader({ context }: LoaderFunctionArgs) {
       a.name.localeCompare(b.name),
   );
 
+  /* Search first, then the chip. The chip counts are taken over the
+     searched set so they describe the board you are looking at, the same
+     way the roster's involvement filters do. */
+  const url = new URL(request.url);
+  const q = (url.searchParams.get("q") ?? "").trim();
+  const rawFilter = url.searchParams.get("filter") ?? "all";
+  const filter: FilterKey = FILTERS.some((f) => f.key === rawFilter)
+    ? (rawFilter as FilterKey)
+    : "all";
+
+  const folded = q.toLowerCase();
+  const searched = q
+    ? sorted.filter(
+        (r) =>
+          r.name.toLowerCase().includes(folded) ||
+          r.email.toLowerCase().includes(folded) ||
+          (r.company ?? "").toLowerCase().includes(folded),
+      )
+    : sorted;
+
+  const counts = Object.fromEntries(
+    FILTERS.map((f) => [f.key, searched.filter((r) => matchesFilter(r, f.key)).length]),
+  ) as Record<FilterKey, number>;
+
+  const visible = searched.filter((r) => matchesFilter(r, filter));
+
+  /* The counters describe what is on screen. A producer who has filtered
+     to the overdue speakers is asking about those speakers, and a header
+     that kept reporting the whole event would be answering a question
+     nobody asked. */
   const totals = {
-    speakers: sorted.length,
-    fullyDone: sorted.filter((r) => r.done === r.total).length,
-    withOverdue: sorted.filter((r) => r.overdue > 0).length,
-    openItems: sorted.reduce((n, r) => n + (r.total - r.done), 0),
+    speakers: visible.length,
+    fullyDone: visible.filter((r) => r.done === r.total).length,
+    withOverdue: visible.filter((r) => r.overdue > 0).length,
+    openItems: visible.reduce((n, r) => n + (r.total - r.done), 0),
   };
 
-  return { taskList, rows: sorted, totals, ms: Date.now() - started };
+  return {
+    taskList,
+    rows: visible,
+    totals,
+    counts,
+    q,
+    filter,
+    everyone: sorted.length,
+    ms: Date.now() - started,
+  };
 }
 
 /* Used until somebody edits the task_reminder template, so a fresh
@@ -388,16 +463,9 @@ const CELL: Record<string, { dot: string; label: string }> = {
   waived: { dot: "bg-muted-strong ring-1 ring-line-strong", label: "Waived" },
 };
 
-function agoLabel(ms: number | null) {
-  if (!ms) return null;
-  const days = Math.floor((Date.now() - ms) / 86_400_000);
-  if (days <= 0) return "today";
-  if (days === 1) return "yesterday";
-  return `${days}d ago`;
-}
-
 export default function Onboarding() {
-  const { taskList, rows, totals, ms } = useLoaderData<typeof loader>();
+  const { taskList, rows, totals, counts, q, filter, everyone, ms } =
+    useLoaderData<typeof loader>();
   const action = useActionData<{
     ok?: boolean;
     failed?: number;
@@ -418,6 +486,12 @@ export default function Onboarding() {
             </h1>
             <p className="mt-0.5 text-[13px] text-dim">
               Who is still holding things up, worst first.
+              {(filter !== "all" || q) && (
+                <>
+                  {" "}
+                  Showing {rows.length} of {everyone}.
+                </>
+              )}
             </p>
           </div>
           <div className="rounded-md bg-muted px-2 py-1 font-mono text-[11px] tabular-nums text-dim">
@@ -453,6 +527,76 @@ export default function Onboarding() {
           ))}
         </div>
       </div>
+
+      {/* Filters. A GET form, so the board is a URL a producer can keep
+          open on the second monitor or send to a co-chair. */}
+      <Form
+        method="get"
+        action="/admin/onboarding"
+        className="flex flex-wrap items-center gap-2 border-b border-line bg-surface px-6 py-2.5"
+      >
+        <div className="flex flex-wrap gap-1">
+          {FILTERS.map((f) => {
+            const active = f.key === filter;
+            const next = new URLSearchParams();
+            if (q) next.set("q", q);
+            if (f.key !== "all") next.set("filter", f.key);
+            const qs = next.toString();
+            return (
+              <Link
+                key={f.key}
+                to={qs ? `?${qs}` : "/admin/onboarding"}
+                prefetch="intent"
+                className={[
+                  "flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[13px] transition-colors",
+                  active
+                    ? "bg-accent-soft font-medium text-accent-text"
+                    : "text-dim hover:bg-muted hover:text-strong",
+                ].join(" ")}
+              >
+                {f.label}
+                <span
+                  className={[
+                    "rounded px-1.5 py-0.5 text-[11px] tabular-nums",
+                    active
+                      ? "bg-accent-soft-strong text-accent-text"
+                      : "bg-muted text-dim",
+                  ].join(" ")}
+                >
+                  {counts[f.key]}
+                </span>
+              </Link>
+            );
+          })}
+        </div>
+
+        <div className="ml-auto flex items-center gap-2">
+          {filter !== "all" && (
+            <input type="hidden" name="filter" value={filter} />
+          )}
+          <input
+            name="q"
+            defaultValue={q}
+            placeholder="Search speaker name"
+            aria-label="Search speaker name"
+            className="w-56 rounded-md border border-line-strong bg-surface px-2.5 py-1 text-[13px] text-strong outline-none placeholder:text-faint focus:border-accent-solid focus:ring-2 focus:ring-accent-ring"
+          />
+          <button
+            type="submit"
+            className="cb-btn cb-btn-secondary px-2.5 py-1 text-[13px]"
+          >
+            Search
+          </button>
+          {(q || filter !== "all") && (
+            <Link
+              to="/admin/onboarding"
+              className="text-[13px] text-dim underline-offset-2 hover:text-strong hover:underline"
+            >
+              Clear
+            </Link>
+          )}
+        </div>
+      </Form>
 
       <div className="px-6 py-4">
         {action?.message && (
@@ -533,10 +677,7 @@ export default function Onboarding() {
               <tbody>
                 {rows.map((r) => {
                   const pct = r.total ? Math.round((r.done / r.total) * 100) : 100;
-                  const recentlyNudged =
-                    r.lastNudgedAt !== null &&
-                    Date.now() - r.lastNudgedAt <
-                      NUDGE_COOLDOWN_HOURS * 3_600_000;
+                  const chasedRecently = recentlyNudged(r.lastNudgedAt);
                   return (
                     <tr
                       key={r.participantId}
@@ -620,14 +761,10 @@ export default function Onboarding() {
                               <span
                                 className={[
                                   "text-[12px]",
-                                  recentlyNudged
-                                    ? "text-warn"
-                                    : "text-faint",
+                                  chasedRecently ? "text-warn" : "text-faint",
                                 ].join(" ")}
                                 title={
-                                  recentlyNudged
-                                    ? "Reminded within the last day, give them a moment"
-                                    : undefined
+                                  chasedRecently ? COOLDOWN_WARNING : undefined
                                 }
                               >
                                 sent {agoLabel(r.lastNudgedAt)}

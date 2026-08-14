@@ -514,7 +514,7 @@ export default function Decisions() {
                       <td className="max-w-xs truncate px-4 py-2">{l.subject}</td>
                       <td className="px-4 py-2 text-dim">{l.templateKey}</td>
                       <td className="px-4 py-2 text-dim tabular-nums">
-                        {l.icsUid ? `seq ${l.icsSequence}` : "—"}
+                        {l.icsUid ? `seq ${l.icsSequence}` : "-"}
                       </td>
                       <td className="px-4 py-2">
                         <span

@@ -8,8 +8,8 @@ import {
   useSearchParams,
 } from "react-router";
 import type { LoaderFunctionArgs, ActionFunctionArgs } from "react-router";
-import { and, asc, eq, inArray } from "drizzle-orm";
-import { getDb, DEMO_EVENT_ID } from "~/db/client";
+import { and, asc, eq, inArray, notInArray } from "drizzle-orm";
+import { getDb, DEMO_EVENT_ID, cloudflareContext } from "~/db/client";
 import {
   submissions,
   submissionParticipants,
@@ -19,6 +19,9 @@ import {
   assignments,
   scores,
   evaluatorConflicts,
+  emailLog,
+  emailTemplates,
+  events,
 } from "~/db/schema";
 import {
   CONFLICT_REASONS,
@@ -28,6 +31,8 @@ import {
   comparatorFor,
   computeEvaluationResults,
   conflictReasonLabel,
+  createAssignments,
+  describeAssignment,
   criterionType,
   describeWeighting,
   formatOptions,
@@ -40,6 +45,27 @@ import {
   type SortDir,
 } from "~/lib/evaluation";
 import { OptionsMenu } from "~/components/OptionsMenu";
+import { render, sendEmail } from "~/lib/email";
+import { mergeVars, usesMagicLink } from "~/lib/emails";
+import { mintSignInLink } from "~/lib/people";
+import {
+  COOLDOWN_WARNING,
+  agoLabel,
+  describeNudge,
+  recentlyNudged,
+} from "~/lib/nudge";
+
+/* Used until somebody writes a review_reminder template of their own, so
+   a fresh install can chase a committee rather than quietly doing
+   nothing. */
+const DEFAULT_REVIEW_REMINDER = {
+  subject: "{{reviewCount}} {{reviewWord}} still waiting on your review",
+  bodyHtml:
+    "<p>Hi {{participant.firstName}},</p>" +
+    "<p>You have <strong>{{reviewCount}}</strong> {{reviewWord}} still to review for {{event.name}}.</p>" +
+    '<p><a href="{{queueUrl}}">Open your review queue</a></p>' +
+    "<p>Thank you for helping put the programme together.</p>",
+};
 
 export async function loader({ context, request }: LoaderFunctionArgs) {
   const started = Date.now();
@@ -190,6 +216,14 @@ export async function loader({ context, request }: LoaderFunctionArgs) {
 
   const evaluatorStats = evaluators.map((e) => {
     const mine = allAssignments.filter((a) => a.participantId === e.id);
+    const outstanding = mine.filter((a) => a.status !== "complete");
+    /* The most recent chase across their open reviews, which is what
+       "reminded 2d ago" means for a person rather than for one row. */
+    const lastNudgedAt = outstanding.reduce<number | null>((latest, a) => {
+      const at = a.lastNudgedAt ? new Date(a.lastNudgedAt).getTime() : null;
+      return at && (!latest || at > latest) ? at : latest;
+    }, null);
+
     return {
       id: e.id,
       name: [e.firstName, e.lastName].filter(Boolean).join(" "),
@@ -197,6 +231,8 @@ export async function loader({ context, request }: LoaderFunctionArgs) {
       company: e.company,
       assigned: mine.length,
       complete: mine.filter((a) => a.status === "complete").length,
+      outstanding: outstanding.length,
+      lastNudgedAt,
       conflicts: conflicts.filter((c) => c.participantId === e.id).length,
     };
   });
@@ -215,6 +251,43 @@ export async function loader({ context, request }: LoaderFunctionArgs) {
     };
   });
 
+  /* Candidates for the assign panel, loaded only when it is open.
+     Drafts and withdrawn submissions are left out: nobody reviews a
+     proposal its author has not finished or has taken back. */
+  const assignFor = url.searchParams.get("assign");
+  const assignCandidates = assignFor
+    ? (
+        await db
+          .select({
+            id: submissions.id,
+            ref: submissions.ref,
+            title: submissions.title,
+            status: submissions.status,
+            trackName: tracks.name,
+          })
+          .from(submissions)
+          .leftJoin(tracks, eq(submissions.trackId, tracks.id))
+          .where(
+            and(
+              eq(submissions.eventId, DEMO_EVENT_ID),
+              notInArray(submissions.status, ["draft", "withdrawn"]),
+            ),
+          )
+          .orderBy(asc(submissions.refSeq))
+      ).map((s) => ({
+        ...s,
+        /* Both states are shown rather than filtered out of existence: a
+           producer looking for a submission needs to see why it is not
+           on offer, or they will go looking for it again tomorrow. */
+        assigned: allAssignments.some(
+          (a) => a.participantId === assignFor && a.submissionId === s.id,
+        ),
+        conflict: conflicts.some(
+          (c) => c.participantId === assignFor && c.submissionId === s.id,
+        ),
+      }))
+    : [];
+
   const totals = {
     evaluations: allAssignments.length,
     complete: allAssignments.filter((a) => a.status === "complete").length,
@@ -226,6 +299,8 @@ export async function loader({ context, request }: LoaderFunctionArgs) {
   return {
     plans,
     planStats,
+    assignFor,
+    assignCandidates,
     editPlanId: url.searchParams.get("plan"),
     creatingPlan: url.searchParams.get("newplan") === "1",
     evaluators: evaluatorStats,
@@ -319,6 +394,190 @@ export async function action({ context, request }: ActionFunctionArgs) {
   }
 
   /* --- Spread unreviewed submissions across evaluators -------------- */
+  /* One reviewer, several submissions, chosen by hand. Round robin is
+     for filling a programme; this is for "she should look at these two". */
+  if (intent === "assign_submissions") {
+    const participantId = String(fd.get("participantId") ?? "");
+    const planId = String(fd.get("planId") ?? "");
+    const submissionIds = (fd.getAll("submissionIds") as string[]).filter(
+      Boolean,
+    );
+
+    const plan = await db.query.evaluationPlans.findFirst({
+      where: and(
+        eq(evaluationPlans.id, planId),
+        eq(evaluationPlans.eventId, DEMO_EVENT_ID),
+      ),
+    });
+    if (!plan) return { ok: false, error: "Pick a plan to assign under." };
+    if (!submissionIds.length) {
+      return { ok: false, error: "Pick at least one submission." };
+    }
+
+    const result = await createAssignments(db, {
+      planId,
+      pairs: submissionIds.map((submissionId) => ({
+        participantId,
+        submissionId,
+      })),
+    });
+
+    return {
+      ok: result.blockedByConflict === 0,
+      assigned: `${describeAssignment(result)} Under ${plan.name}.`,
+    };
+  }
+
+  /* --- Chasing reviewers -------------------------------------------- *
+   *
+   * The same shape as chasing speakers on the onboarding board: a real
+   * email that says how much is outstanding and links to the queue, a
+   * timestamp stamped only when it actually left, and a result that
+   * counts what happened rather than what was attempted.
+   * ------------------------------------------------------------------ */
+  if (intent === "remind_reviewer" || intent === "remind_all_reviewers") {
+    const env = context.get(cloudflareContext).env;
+    const origin = new URL(request.url).origin;
+    const now = new Date();
+
+    const targets =
+      intent === "remind_all_reviewers"
+        ? (fd.getAll("allReviewerIds") as string[])
+        : [String(fd.get("participantId"))];
+    const ids = targets.filter(Boolean);
+    if (!ids.length) return { ok: false, error: "Nobody to remind." };
+
+    const event = await db.query.events.findFirst({
+      where: eq(events.id, DEMO_EVENT_ID),
+    });
+
+    const tpl = await db.query.emailTemplates.findFirst({
+      where: and(
+        eq(emailTemplates.eventId, DEMO_EVENT_ID),
+        eq(emailTemplates.key, "review_reminder"),
+      ),
+    });
+    if (tpl && !tpl.enabled) {
+      return {
+        ok: false,
+        error:
+          "The review reminder template is switched off, so nothing was sent.",
+      };
+    }
+
+    const people = await db
+      .select({
+        id: participants.id,
+        email: participants.email,
+        firstName: participants.firstName,
+        lastName: participants.lastName,
+        company: participants.company,
+        jobTitle: participants.jobTitle,
+      })
+      .from(participants)
+      .where(inArray(participants.id, ids));
+
+    /* What each reviewer still owes. A reminder that names a number the
+       reviewer can check against their own queue is the one they act
+       on. */
+    const outstanding = await db
+      .select({
+        participantId: assignments.participantId,
+        id: assignments.id,
+      })
+      .from(assignments)
+      .where(
+        and(
+          inArray(assignments.participantId, ids),
+          inArray(assignments.status, ["pending", "skipped"]),
+        ),
+      );
+
+    const openBy = new Map<string, number>();
+    for (const a of outstanding) {
+      openBy.set(a.participantId, (openBy.get(a.participantId) ?? 0) + 1);
+    }
+
+    let sent = 0;
+    let queued = 0;
+    let failed = 0;
+    let skipped = 0;
+    let firstError: string | null = null;
+
+    const needsLink = usesMagicLink(
+      tpl?.subject ?? DEFAULT_REVIEW_REMINDER.subject,
+      tpl?.bodyHtml ?? DEFAULT_REVIEW_REMINDER.bodyHtml,
+    );
+
+    for (const person of people) {
+      const open = openBy.get(person.id) ?? 0;
+      if (open === 0) {
+        skipped++;
+        continue;
+      }
+
+      const magicLinkUrl = needsLink
+        ? await mintSignInLink(db, person.id, origin)
+        : "";
+
+      const vars = {
+        ...mergeVars(person, event, origin, magicLinkUrl),
+        reviewCount: String(open),
+        reviewWord: open === 1 ? "submission" : "submissions",
+        queueUrl: `${origin}/admin/evaluation?tab=review&as=${person.id}`,
+      };
+
+      const subject = render(
+        tpl?.subject ?? DEFAULT_REVIEW_REMINDER.subject,
+        vars,
+      );
+      const html = render(
+        tpl?.bodyHtml ?? DEFAULT_REVIEW_REMINDER.bodyHtml,
+        vars,
+      );
+
+      const result = await sendEmail(env, { to: person.email, subject, html });
+
+      if (!result.ok) {
+        failed++;
+        firstError ??= result.error ?? "send failed";
+      } else if (result.simulated) queued++;
+      else sent++;
+
+      await db.insert(emailLog).values({
+        eventId: DEMO_EVENT_ID,
+        participantId: person.id,
+        templateKey: "review_reminder",
+        toEmail: person.email,
+        subject,
+        bodyHtml: html,
+        status: result.ok ? (result.simulated ? "queued" : "sent") : "failed",
+        error: result.error ?? null,
+        recoveryLink: !result.ok && magicLinkUrl ? magicLinkUrl : null,
+        sentAt: result.ok && !result.simulated ? new Date() : null,
+      });
+
+      // Only a chase that left the building counts as a chase.
+      if (result.ok) {
+        await db
+          .update(assignments)
+          .set({ lastNudgedAt: now })
+          .where(
+            and(
+              eq(assignments.participantId, person.id),
+              inArray(assignments.status, ["pending", "skipped"]),
+            ),
+          );
+      }
+    }
+
+    return {
+      ok: failed === 0,
+      failed,
+      nudged: describeNudge({ sent, queued, failed, skipped, firstError }),
+    };
+  }
+
   /* --- Plan CRUD ---------------------------------------------------- */
 
   if (intent === "plan_create" || intent === "plan_update") {
@@ -638,6 +897,8 @@ export default function Evaluation() {
   const {
     plans,
     planStats,
+    assignFor,
+    assignCandidates,
     editPlanId,
     creatingPlan,
     evaluators,
@@ -653,6 +914,9 @@ export default function Evaluation() {
   const action = useActionData<{
     declared?: string;
     planSaved?: string;
+    assigned?: string;
+    nudged?: string;
+    failed?: number;
     error?: string;
   }>();
   const [params, setParams] = useSearchParams();
@@ -679,6 +943,7 @@ export default function Evaluation() {
   };
 
   const pending = myQueue.filter((q) => q.status !== "complete");
+  const laggingReviewers = evaluators.filter((e) => e.outstanding > 0);
   const current = pending[0];
 
   return (
@@ -1117,7 +1382,7 @@ export default function Evaluation() {
                         className="border-b border-line-soft last:border-0 hover:bg-subtle"
                       >
                         <td className="px-4 py-2.5 tabular-nums text-faint">
-                          {r.rank ?? "—"}
+                          {r.rank ?? "-"}
                         </td>
                         <td className="px-4 py-2.5">
                           <div className="font-medium text-strong">
@@ -1128,7 +1393,7 @@ export default function Evaluation() {
                           </div>
                         </td>
                         <td className="px-4 py-2.5 text-body">
-                          {r.trackName ?? "—"}
+                          {r.trackName ?? "-"}
                         </td>
                         <td className="px-4 py-2.5">
                           {r.average === null ? (
@@ -1162,6 +1427,64 @@ export default function Evaluation() {
 
         {tab === "evaluators" && (
           <div className="space-y-4">
+            {action?.assigned && (
+              <p className="cb-note cb-note-success px-3 py-2.5 text-[13px]">
+                {action.assigned}
+              </p>
+            )}
+
+            {assignFor && (
+              <AssignPanel
+                reviewer={evaluators.find((e) => e.id === assignFor)}
+                candidates={assignCandidates}
+                plans={plans}
+                busy={busy}
+              />
+            )}
+
+            {action?.nudged && (
+              <p
+                className={[
+                  "cb-note px-3 py-2.5 text-[13px]",
+                  action.failed ? "cb-note-warn" : "cb-note-success",
+                ].join(" ")}
+              >
+                {action.nudged}{" "}
+                <Link
+                  to="/admin/emails?template=review_reminder"
+                  className="underline underline-offset-2"
+                >
+                  Every one is in the email log.
+                </Link>
+              </p>
+            )}
+
+            {laggingReviewers.length > 0 && (
+              <Form method="post">
+                <input
+                  type="hidden"
+                  name="intent"
+                  value="remind_all_reviewers"
+                />
+                {laggingReviewers.map((e) => (
+                  <input
+                    key={e.id}
+                    type="hidden"
+                    name="allReviewerIds"
+                    value={e.id}
+                  />
+                ))}
+                <button
+                  disabled={busy}
+                  className="cb-btn cb-btn-primary px-3 py-1.5 text-[13px]"
+                >
+                  {busy
+                    ? "Sending"
+                    : `Remind all ${laggingReviewers.length} with incomplete reviews`}
+                </button>
+              </Form>
+            )}
+
             <div className="overflow-hidden rounded-lg border border-line bg-surface">
               <table className="w-full text-left text-[13px]">
                 <thead>
@@ -1169,6 +1492,8 @@ export default function Evaluation() {
                     <th className="px-4 py-2 font-medium">Evaluator</th>
                     <th className="px-4 py-2 font-medium">Progress</th>
                     <th className="px-4 py-2 font-medium">Conflicts</th>
+                    <th className="px-4 py-2 font-medium">Work</th>
+                    <th className="px-4 py-2 font-medium">Chase</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1198,7 +1523,62 @@ export default function Evaluation() {
                           </div>
                         </td>
                         <td className="px-4 py-2.5 text-dim tabular-nums">
-                          {e.conflicts || "—"}
+                          {e.conflicts || "-"}
+                        </td>
+                        <td className="px-4 py-2.5">
+                          <Link
+                            to={`?tab=evaluators&assign=${e.id}`}
+                            className="text-[12px] text-accent-text underline-offset-2 hover:underline"
+                          >
+                            Assign
+                          </Link>
+                        </td>
+                        <td className="px-4 py-2.5">
+                          {e.outstanding === 0 ? (
+                            <span className="text-[12px] text-faint">
+                              Nothing outstanding
+                            </span>
+                          ) : (
+                            <Form
+                              method="post"
+                              className="flex items-center gap-2"
+                            >
+                              <input
+                                type="hidden"
+                                name="intent"
+                                value="remind_reviewer"
+                              />
+                              <input
+                                type="hidden"
+                                name="participantId"
+                                value={e.id}
+                              />
+                              <button
+                                disabled={busy}
+                                className="cb-btn cb-btn-secondary px-2 py-1 text-[12px]"
+                                title={`Email them about ${e.outstanding} outstanding review${e.outstanding === 1 ? "" : "s"}`}
+                              >
+                                Remind
+                              </button>
+                              {e.lastNudgedAt && (
+                                <span
+                                  className={[
+                                    "text-[12px]",
+                                    recentlyNudged(e.lastNudgedAt)
+                                      ? "text-warn"
+                                      : "text-faint",
+                                  ].join(" ")}
+                                  title={
+                                    recentlyNudged(e.lastNudgedAt)
+                                      ? COOLDOWN_WARNING
+                                      : undefined
+                                  }
+                                >
+                                  sent {agoLabel(e.lastNudgedAt)}
+                                </span>
+                              )}
+                            </Form>
+                          )}
                         </td>
                       </tr>
                     );
@@ -1382,6 +1762,170 @@ export default function Evaluation() {
         )}
       </div>
     </div>
+  );
+}
+
+/* --- Assigning submissions to one reviewer ---------------------------- *
+ *
+ * Searchable because a programme has hundreds of submissions and the
+ * producer already knows which two they mean. Filtering happens in the
+ * browser over a list the server has already scoped, so typing is
+ * instant and no keystroke goes to the database.
+ * ------------------------------------------------------------------ */
+function AssignPanel({
+  reviewer,
+  candidates,
+  plans,
+  busy,
+}: {
+  reviewer?: { id: string; name: string; assigned: number };
+  candidates: {
+    id: string;
+    ref: string;
+    title: string;
+    status: string;
+    trackName: string | null;
+    assigned: boolean;
+    conflict: boolean;
+  }[];
+  plans: { id: string; name: string }[];
+  busy: boolean;
+}) {
+  const [q, setQ] = useState("");
+  const [picked, setPicked] = useState<string[]>([]);
+
+  if (!reviewer) return null;
+
+  const folded = q.trim().toLowerCase();
+  const shown = folded
+    ? candidates.filter(
+        (c) =>
+          c.title.toLowerCase().includes(folded) ||
+          c.ref.toLowerCase().includes(folded) ||
+          (c.trackName ?? "").toLowerCase().includes(folded),
+      )
+    : candidates;
+
+  const available = shown.filter((c) => !c.assigned && !c.conflict);
+
+  return (
+    <Form
+      method="post"
+      className="space-y-3 rounded-lg border border-accent-ring bg-surface p-4"
+    >
+      <input type="hidden" name="intent" value="assign_submissions" />
+      <input type="hidden" name="participantId" value={reviewer.id} />
+
+      <div className="flex items-baseline justify-between">
+        <h3 className="text-[14px] font-semibold">
+          Assign submissions to {reviewer.name}
+          <span className="ml-1.5 font-normal text-dim">
+            {reviewer.assigned} already on their plate
+          </span>
+        </h3>
+        <Link
+          to="?tab=evaluators"
+          className="text-[12px] text-dim underline-offset-2 hover:text-strong hover:underline"
+        >
+          Cancel
+        </Link>
+      </div>
+
+      <div className="flex flex-wrap items-end gap-2">
+        <label className="block min-w-56 flex-1">
+          <span className="text-[13px] font-medium">Search submissions</span>
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Title, reference or track"
+            className={planField}
+          />
+        </label>
+        <label className="block">
+          <span className="text-[13px] font-medium">Under plan</span>
+          <select name="planId" defaultValue={plans[0]?.id ?? ""} className={planField}>
+            {plans.length === 0 && <option value="">No plans yet</option>}
+            {plans.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+
+      <div className="max-h-72 space-y-1 overflow-y-auto rounded-md border border-line-soft p-2">
+        {shown.length === 0 && (
+          <p className="px-2 py-6 text-center text-[13px] text-dim">
+            Nothing matches “{q}”.
+          </p>
+        )}
+        {shown.map((c) => {
+          const blocked = c.assigned || c.conflict;
+          return (
+            <label
+              key={c.id}
+              className={[
+                "flex items-baseline gap-2 rounded px-2 py-1.5 text-[13px]",
+                blocked ? "opacity-60" : "hover:bg-subtle",
+              ].join(" ")}
+            >
+              <input
+                type="checkbox"
+                name="submissionIds"
+                value={c.id}
+                disabled={blocked}
+                checked={picked.includes(c.id)}
+                onChange={(e) =>
+                  setPicked((p) =>
+                    e.target.checked
+                      ? [...p, c.id]
+                      : p.filter((x) => x !== c.id),
+                  )
+                }
+                className="mt-0.5 h-4 w-4 shrink-0 rounded border-line-strong"
+              />
+              <span className="font-mono text-[11px] text-faint">{c.ref}</span>
+              <span className="min-w-0 flex-1 text-strong">{c.title}</span>
+              {c.trackName && (
+                <span className="shrink-0 text-[12px] text-dim">
+                  {c.trackName}
+                </span>
+              )}
+              {/* Named, not hidden: "why can I not pick this" is the next
+                  question if it simply were not there. */}
+              {c.conflict && (
+                <span className="cb-pill cb-pill-warn shrink-0">
+                  conflict of interest
+                </span>
+              )}
+              {c.assigned && !c.conflict && (
+                <span className="cb-pill cb-pill-neutral shrink-0">
+                  already assigned
+                </span>
+              )}
+            </label>
+          );
+        })}
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          disabled={busy || picked.length === 0 || plans.length === 0}
+          className="cb-btn cb-btn-primary px-3 py-1.5 text-[13px]"
+        >
+          {busy
+            ? "Assigning"
+            : `Assign ${picked.length || ""} submission${picked.length === 1 ? "" : "s"}`.trim()}
+        </button>
+        <span className="text-[12px] text-dim">
+          {available.length} available to assign
+          {shown.length !== candidates.length &&
+            ` of ${shown.length} matching`}
+          . Conflicts of interest cannot be assigned.
+        </span>
+      </div>
+    </Form>
   );
 }
 

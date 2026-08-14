@@ -328,10 +328,10 @@ export default function People() {
                         </a>
                       </td>
                       <td className="px-4 py-2.5 text-body">
-                        {p.company || <span className="text-faint">—</span>}
+                        {p.company || <span className="text-faint">-</span>}
                       </td>
                       <td className="px-4 py-2.5 text-body">
-                        {p.jobTitle || <span className="text-faint">—</span>}
+                        {p.jobTitle || <span className="text-faint">-</span>}
                       </td>
                       <td className="px-4 py-2.5">
                         {p.roles.length === 0 ? (

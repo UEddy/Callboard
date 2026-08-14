@@ -1,0 +1,1 @@
+ALTER TABLE `assignments` ADD `last_nudged_at` integer;

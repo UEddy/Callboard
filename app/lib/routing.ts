@@ -33,6 +33,40 @@ type Db = ReturnType<typeof getDb>;
    a routed submission and a hand-assigned one look alike. */
 const REVIEWERS_PER_SUBMISSION = 2;
 
+/* ------------------------------------------------------------------ *
+ * The trail is the submission's history, not only its routing.
+ *
+ * Two kinds of entry share the column: what a rule did at submit time,
+ * and what a person did afterwards. Everything in it is denormalised on
+ * purpose, names rather than ids, because it is a record of what
+ * happened and renaming a track later must not rewrite the past.
+ * Entries written before edits existed carry no `kind`, so an absent one
+ * means routing.
+ * ------------------------------------------------------------------ */
+
+export type EditEntry = {
+  kind: "edit";
+  at: string;
+  byId: string;
+  byName: string;
+  changes: { field: string; from: string; to: string }[];
+  /* Rules that would have fired on the new values and deliberately did
+     not, so the history says what was declined as well as what was
+     done. */
+  suppressed?: {
+    condition: string;
+    setTrack?: string;
+    addedTags?: string[];
+    plan?: string;
+  }[];
+};
+
+export type TrailEntry = RoutingEffect | EditEntry;
+
+export function isEditEntry(entry: TrailEntry): entry is EditEntry {
+  return (entry as EditEntry).kind === "edit";
+}
+
 export type RoutingEffect = {
   ruleId: string;
   condition: string;
@@ -236,6 +270,117 @@ async function retireDroppedPlans(
    on the same submission: tags union, assignments dedupe, and the trail
    is replaced rather than appended so it always describes the current
    state of the submission. */
+/* What routing would have done, without doing any of it.
+ *
+ * A producer editing a submission by hand is making a decision, not
+ * filling in a form, so their edit must never reassign reviewers or
+ * rewrite the track underneath them. But silence would be worse than
+ * either: if a change now matches a rule, they should be told, and then
+ * left to act on it. This returns the sentence to tell them. */
+export type RoutingPreview = {
+  ruleId: string;
+  condition: string;
+  wouldSetTrack?: string;
+  wouldAddTags?: string[];
+  wouldAssignPlan?: string;
+  wouldAssignReviewers?: number;
+};
+
+export async function previewRoutingRules(
+  db: Db,
+  opts: {
+    eventId: string;
+    formId: string | null;
+    submission: {
+      title: string | null;
+      description: string | null;
+      format: string | null;
+      level: string | null;
+      trackId: string | null;
+      tagIds: string[] | null;
+      answers: Record<string, unknown> | null;
+    };
+  },
+): Promise<RoutingPreview[]> {
+  const { eventId, formId, submission } = opts;
+  if (!formId) return [];
+
+  const rules = await db
+    .select()
+    .from(routingRules)
+    .where(eq(routingRules.formId, formId))
+    .orderBy(routingRules.sortOrder);
+  if (rules.length === 0) return [];
+
+  const [trackList, tagList, planList, defs] = await Promise.all([
+    db.select({ id: tracks.id, name: tracks.name }).from(tracks).where(eq(tracks.eventId, eventId)),
+    db.select({ id: tags.id, name: tags.name }).from(tags).where(eq(tags.eventId, eventId)),
+    db
+      .select({ id: evaluationPlans.id, name: evaluationPlans.name })
+      .from(evaluationPlans)
+      .where(eq(evaluationPlans.eventId, eventId)),
+    db
+      .select({ key: fieldDefinitions.key, label: fieldDefinitions.label })
+      .from(fieldDefinitions)
+      .where(eq(fieldDefinitions.eventId, eventId)),
+  ]);
+
+  const trackNameById = new Map(trackList.map((t) => [t.id, t.name]));
+  const tagNameById = new Map(tagList.map((t) => [t.id, t.name]));
+  const planNameById = new Map(planList.map((p) => [p.id, p.name]));
+  const labelByKey = new Map(defs.map((d) => [d.key, d.label]));
+
+  const ctx = buildContext(submission, trackNameById);
+  const held = new Set(submission.tagIds ?? []);
+  const out: RoutingPreview[] = [];
+
+  for (const rule of rules) {
+    const actual = ctx[rule.whenFieldKey] ?? "";
+    if (!matches(rule.whenOp, actual, rule.whenValue)) continue;
+
+    const label = labelByKey.get(rule.whenFieldKey) ?? rule.whenFieldKey;
+    const verb =
+      rule.whenOp === "eq"
+        ? "is"
+        : rule.whenOp === "neq"
+          ? "is not"
+          : rule.whenOp === "in"
+            ? "is one of"
+            : "contains";
+
+    const preview: RoutingPreview = {
+      ruleId: rule.id,
+      condition: `${label} ${verb} "${rule.whenValue}"`,
+    };
+
+    /* Only what the edit would actually change is worth reporting. A
+       rule that would set the track it already has is not news. */
+    if (
+      rule.assignTrackId &&
+      trackNameById.has(rule.assignTrackId) &&
+      rule.assignTrackId !== submission.trackId
+    ) {
+      preview.wouldSetTrack = trackNameById.get(rule.assignTrackId);
+    }
+
+    const newTags = (rule.assignTagIds ?? [])
+      .filter((id) => tagNameById.has(id) && !held.has(id))
+      .map((id) => tagNameById.get(id)!);
+    if (newTags.length) preview.wouldAddTags = newTags;
+
+    if (rule.assignPlanId && planNameById.has(rule.assignPlanId)) {
+      preview.wouldAssignPlan = planNameById.get(rule.assignPlanId);
+      preview.wouldAssignReviewers = REVIEWERS_PER_SUBMISSION;
+    }
+
+    const changesSomething =
+      preview.wouldSetTrack || preview.wouldAddTags || preview.wouldAssignPlan;
+    if (changesSomething) out.push(preview);
+  }
+
+  return out;
+}
+
 export async function applyRoutingRules(
   db: Db,
   opts: { eventId: string; formId: string; submissionId: string },

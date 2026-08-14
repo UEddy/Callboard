@@ -9,6 +9,12 @@
  * matches the screen.
  * ------------------------------------------------------------------ */
 
+import { and, inArray } from "drizzle-orm";
+import { assignments, evaluatorConflicts } from "~/db/schema";
+import type { getDb } from "~/db/client";
+
+type Db = ReturnType<typeof getDb>;
+
 /* What a reviewer is asked to give.
  *
  * numeric   the radio scale, the original and still the default
@@ -488,6 +494,119 @@ export function parseCriteria(
   }
 
   return { ok: true, criteria: out };
+}
+
+/* --- Assigning by hand ------------------------------------------------ *
+ *
+ * Two screens do this, one reviewer to many submissions and one
+ * submission to many reviewers, and they are the same operation read
+ * from either end. One implementation, so neither can forget the two
+ * rules that matter: never assign across a conflict of interest, and
+ * never assign the same pair twice.
+ *
+ * The conflict check is repeated here even though both screens already
+ * hide conflicted options. A control that only prevents a thing in the
+ * markup prevents nothing.
+ * ------------------------------------------------------------------ */
+export async function createAssignments(
+  db: Db,
+  opts: {
+    planId: string;
+    pairs: { participantId: string; submissionId: string }[];
+  },
+): Promise<{
+  created: number;
+  blockedByConflict: number;
+  alreadyAssigned: number;
+}> {
+  const pairs = opts.pairs.filter((p) => p.participantId && p.submissionId);
+  if (!pairs.length)
+    return { created: 0, blockedByConflict: 0, alreadyAssigned: 0 };
+
+  const participantIds = [...new Set(pairs.map((p) => p.participantId))];
+  const submissionIds = [...new Set(pairs.map((p) => p.submissionId))];
+
+  const [conflicts, existing] = await Promise.all([
+    db
+      .select({
+        participantId: evaluatorConflicts.participantId,
+        submissionId: evaluatorConflicts.submissionId,
+      })
+      .from(evaluatorConflicts)
+      .where(
+        and(
+          inArray(evaluatorConflicts.participantId, participantIds),
+          inArray(evaluatorConflicts.submissionId, submissionIds),
+        ),
+      ),
+    /* Across every plan, not just this one: a producer asking "is she
+       already reviewing it" does not mean "under this plan". */
+    db
+      .select({
+        participantId: assignments.participantId,
+        submissionId: assignments.submissionId,
+      })
+      .from(assignments)
+      .where(
+        and(
+          inArray(assignments.participantId, participantIds),
+          inArray(assignments.submissionId, submissionIds),
+        ),
+      ),
+  ]);
+
+  const key = (p: { participantId: string; submissionId: string }) =>
+    `${p.participantId}:${p.submissionId}`;
+  const blocked = new Set(conflicts.map(key));
+  const held = new Set(existing.map(key));
+
+  let created = 0;
+  let blockedByConflict = 0;
+  let alreadyAssigned = 0;
+
+  for (const pair of pairs) {
+    if (blocked.has(key(pair))) {
+      blockedByConflict++;
+      continue;
+    }
+    if (held.has(key(pair))) {
+      alreadyAssigned++;
+      continue;
+    }
+
+    await db
+      .insert(assignments)
+      .values({
+        planId: opts.planId,
+        participantId: pair.participantId,
+        submissionId: pair.submissionId,
+        round: 1,
+        status: "pending",
+      })
+      .onConflictDoNothing();
+
+    held.add(key(pair));
+    created++;
+  }
+
+  return { created, blockedByConflict, alreadyAssigned };
+}
+
+export function describeAssignment(result: {
+  created: number;
+  blockedByConflict: number;
+  alreadyAssigned: number;
+}) {
+  const bits: string[] = [];
+  if (result.created)
+    bits.push(`${result.created} assignment${result.created === 1 ? "" : "s"} created`);
+  if (result.alreadyAssigned)
+    bits.push(`${result.alreadyAssigned} already assigned`);
+  if (result.blockedByConflict)
+    bits.push(
+      `${result.blockedByConflict} skipped for a conflict of interest`,
+    );
+  return bits.length ? `${bits.join(", ")}.` : "Nothing to assign.";
 }
 
 /* Every criterion any plan defines, in plan order then criterion order,
