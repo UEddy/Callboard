@@ -18,13 +18,13 @@ import {
   loadPublicEvent,
   parseFields,
   publicLinks,
-  VIEWS,
+  PUBLIC_VIEWS,
   VIEW_LABEL,
   VIEW_SLUG,
   viewFromSlug,
   type View,
 } from "~/lib/public-event";
-import { PublicSearch, renderView } from "~/components/PublicViews";
+import { PublicSearch, renderView, useStarred } from "~/components/PublicViews";
 import { embeds } from "~/db/schema";
 import { eq } from "drizzle-orm";
 import { readViewerZone } from "~/lib/viewer-tz";
@@ -173,6 +173,9 @@ export default function PublicEvent() {
   const data = useLoaderData<typeof loader>();
   const [params, setParams] = useSearchParams();
   const { pathname } = useLocation();
+  /* The attendee's starred list. Read from localStorage after mount, so
+     it costs the server nothing and needs no account. */
+  const stars = useStarred(data.retired ? "" : data.event.slug);
 
   if (data.retired) {
     return (
@@ -199,6 +202,8 @@ export default function PublicEvent() {
        travel with the link, so Back on the detail page returns to the
        list as the visitor left it. */
     links: publicLinks(event.slug, params, view),
+    stars,
+    eventSlug: event.slug,
     eventZone: data.eventZone,
     viewerZone: data.viewerZone,
   });
@@ -247,7 +252,7 @@ export default function PublicEvent() {
         </div>
 
         <div className="mx-auto flex max-w-5xl gap-1 overflow-x-auto px-4">
-          {VIEWS.map((v) => (
+          {PUBLIC_VIEWS.map((v) => (
             <Link
               key={v}
               to={(() => {
@@ -265,6 +270,14 @@ export default function PublicEvent() {
               ].join(" ")}
             >
               {VIEW_LABEL[v]}
+              {/* Only the personal view carries a count, and only once
+                  the browser has read storage, so the server render and
+                  the first client render agree. */}
+              {v === "my_schedule" && stars.ready && stars.starred.length > 0 && (
+                <span className="ml-1.5 rounded bg-accent-soft px-1.5 py-0.5 text-[11px] tabular-nums text-accent-text">
+                  {stars.starred.length}
+                </span>
+              )}
             </Link>
           ))}
         </div>
@@ -319,6 +332,11 @@ export default function PublicEvent() {
                 hidden={carried}
                 clearHref={clearHref}
               />
+            ) : view === "my_schedule" ? (
+              /* The personal view counts its own, starred, sessions, so a
+                 second count of the whole programme here would contradict
+                 it. */
+              null
             ) : (
               <span className="text-[12px] text-dim tabular-nums">
                 {countsSpeakers

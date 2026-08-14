@@ -10,7 +10,12 @@ import {
   originView,
   publicLinks,
 } from "~/lib/public-event";
-import { PublicDetailPage, SessionDetail } from "~/components/PublicViews";
+import {
+  PublicDetailPage,
+  SessionDetail,
+  StarButton,
+  useStarred,
+} from "~/components/PublicViews";
 import { readViewerZone } from "~/lib/viewer-tz";
 
 /* ------------------------------------------------------------------ *
@@ -71,6 +76,7 @@ export default function PublicSessionDetail() {
   const { event, session, fields, embed, eventZone, viewerZone, ms } =
     useLoaderData<typeof loader>();
   const [params] = useSearchParams();
+  const stars = useStarred(event.slug);
 
   /* Whatever list the visitor started from stays the destination of
      Back, all the way down the chain. Absent one, a speaker's name
@@ -86,6 +92,28 @@ export default function PublicSessionDetail() {
       embed={embed}
       ms={ms}
     >
+      <div className="mb-2 flex flex-wrap items-center gap-3">
+        <span className="flex items-center gap-1.5 text-[13px] text-body">
+          <StarButton
+            session={session}
+            starred={stars.isStarred(session.ref)}
+            ready={stars.ready}
+            onToggle={stars.toggle}
+          />
+          {stars.ready && stars.isStarred(session.ref)
+            ? "In my schedule"
+            : "Add to my schedule"}
+        </span>
+        {session.startsAt !== null && (
+          <a
+            href={`/e/${event.slug}/calendar.ics?s=${encodeURIComponent(session.ref)}`}
+            className="rounded-md border border-line-strong bg-surface px-2.5 py-1 text-[13px] font-medium text-body hover:bg-subtle"
+          >
+            Add to calendar
+          </a>
+        )}
+      </div>
+
       <SessionDetail
         session={session}
         eventZone={eventZone}

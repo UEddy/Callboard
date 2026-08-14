@@ -42,7 +42,117 @@ type Data = {
      want: a producer checking a layout should not be able to click out
      of the thing they are previewing. */
   links?: PublicLinks;
+  /* The attendee's own list, when the surrounding page has one. Absent
+     in the admin preview frames, where a producer is checking a layout
+     rather than building a schedule. */
+  stars?: ReturnType<typeof useStarred>;
+  eventSlug?: string;
 };
+
+/* ------------------------------------------------------------------ *
+ * The attendee's own list.
+ *
+ * Kept in localStorage, keyed by event slug so two conferences on one
+ * deployment do not share a schedule. No account, no cookie, nothing
+ * sent to the server: the whole public layer is anonymous and cached at
+ * the edge, and a starred session is nobody's business but the person
+ * who starred it.
+ *
+ * Storage is read after mount rather than during render. The server has
+ * no localStorage, so a star drawn from it on the first pass would be a
+ * hydration mismatch; `ready` keeps the two renders identical until the
+ * browser has spoken.
+ * ------------------------------------------------------------------ */
+
+const starKey = (slug: string) => `callboard:starred:${slug}`;
+
+function readStarred(slug: string): string[] {
+  try {
+    const raw = window.localStorage.getItem(starKey(slug));
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.filter((x) => typeof x === "string") : [];
+  } catch {
+    // Private mode, a full disk, or somebody's extension. Not worth a
+    // broken page.
+    return [];
+  }
+}
+
+export function useStarred(slug: string) {
+  const [starred, setStarred] = useState<string[]>([]);
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    setStarred(readStarred(slug));
+    setReady(true);
+
+    /* Two tabs of the same programme stay in step, which is exactly how
+       somebody browses a conference: the agenda in one, a session in
+       another. */
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === starKey(slug)) setStarred(readStarred(slug));
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, [slug]);
+
+  const toggle = (ref: string) => {
+    setStarred((current) => {
+      const next = current.includes(ref)
+        ? current.filter((r) => r !== ref)
+        : [...current, ref];
+      try {
+        window.localStorage.setItem(starKey(slug), JSON.stringify(next));
+      } catch {
+        /* Still works for this page view, just not the next one. */
+      }
+      return next;
+    });
+  };
+
+  return { starred, ready, toggle, isStarred: (ref: string) => starred.includes(ref) };
+}
+
+export function StarButton({
+  session,
+  starred,
+  ready,
+  onToggle,
+  className = "",
+}: {
+  session: { ref: string; title: string };
+  starred: boolean;
+  ready: boolean;
+  onToggle: (ref: string) => void;
+  className?: string;
+}) {
+  const on = ready && starred;
+  return (
+    <button
+      type="button"
+      onClick={(e) => {
+        // Cards and rows are links; starring is not navigation.
+        e.preventDefault();
+        e.stopPropagation();
+        onToggle(session.ref);
+      }}
+      aria-pressed={on}
+      aria-label={
+        on
+          ? `Remove ${session.title} from my schedule`
+          : `Add ${session.title} to my schedule`
+      }
+      title={on ? "In my schedule" : "Add to my schedule"}
+      className={[
+        "shrink-0 rounded px-1 text-[15px] leading-none transition-colors",
+        on ? "text-warn" : "text-faint hover:text-warn",
+        className,
+      ].join(" ")}
+    >
+      {on ? "★" : "☆"}
+    </button>
+  );
+}
 
 /* A heading that becomes a link when there is somewhere to go. */
 function MaybeLink({
@@ -189,7 +299,7 @@ function Speakers({
         return (
           <li key={sp.id}>
             <span className="text-body">{sp.name}</span>
-            {role && <span className="text-dim"> — {role}</span>}
+            {role && <span className="text-dim"> ({role})</span>}
           </li>
         );
       })}
@@ -290,6 +400,7 @@ export function SessionList({
   eventZone,
   query,
   links,
+  stars,
 }: Data) {
   if (sessions.length === 0) return <Empty what="Sessions" query={query} />;
   return (
@@ -305,14 +416,25 @@ export function SessionList({
               <span className="cb-pill cb-pill-neutral">{s.level}</span>
             )}
           </div>
-          <h3 className="mt-1.5 text-[15px] font-semibold tracking-tight text-strong">
-            <MaybeLink
-              to={links?.session(s.ref)}
-              className="underline-offset-2 hover:underline"
-            >
-              {s.title}
-            </MaybeLink>
-          </h3>
+          <div className="mt-1.5 flex items-start gap-2">
+            {stars && (
+              <StarButton
+                session={s}
+                starred={stars.isStarred(s.ref)}
+                ready={stars.ready}
+                onToggle={stars.toggle}
+                className="mt-0.5"
+              />
+            )}
+            <h3 className="min-w-0 text-[15px] font-semibold tracking-tight text-strong">
+              <MaybeLink
+                to={links?.session(s.ref)}
+                className="underline-offset-2 hover:underline"
+              >
+                {s.title}
+              </MaybeLink>
+            </h3>
+          </div>
           {fields.showSpeakers && (
             <div className="mt-1">
               <Speakers session={s} showRole={fields.showCompany} />
@@ -428,6 +550,7 @@ export function AgendaGrid({
   fields,
   eventZone,
   links,
+  stars,
 }: Data) {
   const placed = sessions.filter((s) => s.startsAt !== null && s.roomId);
   if (placed.length === 0) return <Empty what="Scheduled sessions" />;
@@ -532,10 +655,19 @@ export function AgendaGrid({
                                   className="cb-track-edge h-full rounded-md border-l-4 bg-subtle px-2 py-1.5"
                                   style={hue(starting.trackColor)}
                                 >
-                                  <div className="text-[12px] font-medium leading-tight text-strong">
+                                  <div className="flex items-start gap-1 text-[12px] font-medium leading-tight text-strong">
+                                    {stars && (
+                                      <StarButton
+                                        session={starting}
+                                        starred={stars.isStarred(starting.ref)}
+                                        ready={stars.ready}
+                                        onToggle={stars.toggle}
+                                        className="-ml-0.5 text-[13px]"
+                                      />
+                                    )}
                                     <MaybeLink
                                       to={links?.session(starting.ref)}
-                                      className="underline-offset-2 hover:underline"
+                                      className="min-w-0 underline-offset-2 hover:underline"
                                     >
                                       {starting.title}
                                     </MaybeLink>
@@ -559,7 +691,7 @@ export function AgendaGrid({
                                               {role && (
                                                 <span className="text-faint">
                                                   {" "}
-                                                  — {role}
+                                                  ({role})
                                                 </span>
                                               )}
                                             </li>
@@ -621,6 +753,7 @@ export function ScheduleItinerary({
   eventZone,
   viewerZone,
   links,
+  stars,
 }: Data) {
   const timed = sessions.filter((s) => s.startsAt !== null);
   if (timed.length === 0) return <Empty what="Scheduled sessions" />;
@@ -656,10 +789,18 @@ export function ScheduleItinerary({
                     style={hue(s.trackColor)}
                   />
                   <div className="min-w-0 flex-1">
-                    <div className="text-[14px] font-medium text-strong">
+                    <div className="flex items-start gap-2 text-[14px] font-medium text-strong">
+                      {stars && (
+                        <StarButton
+                          session={s}
+                          starred={stars.isStarred(s.ref)}
+                          ready={stars.ready}
+                          onToggle={stars.toggle}
+                        />
+                      )}
                       <MaybeLink
                         to={links?.session(s.ref)}
-                        className="underline-offset-2 hover:underline"
+                        className="min-w-0 underline-offset-2 hover:underline"
                       >
                         {s.title}
                       </MaybeLink>
@@ -1069,6 +1210,185 @@ export function SpeakerDetail({
   );
 }
 
+/* --- 8. My schedule --------------------------------------------------- *
+ *
+ * The starred sessions, in time order, with a calendar file. Filtered in
+ * the browser because that is where the list lives: the server has no
+ * idea what anybody starred, which is the point.
+ * ------------------------------------------------------------------ */
+
+export function MySchedule({
+  sessions,
+  days,
+  fields,
+  eventZone,
+  viewerZone,
+  links,
+  stars,
+  eventSlug,
+}: Data) {
+  if (!stars) return null;
+
+  /* Until the browser has read storage the list is empty for everyone,
+     so it says nothing rather than flashing "nothing starred" at
+     somebody who has starred six things. */
+  if (!stars.ready) {
+    return (
+      <div className="rounded-lg border border-dashed border-line px-6 py-12 text-center text-[13px] text-dim">
+        Loading your schedule…
+      </div>
+    );
+  }
+
+  const mine = sessions.filter((s) => stars.isStarred(s.ref));
+
+  if (mine.length === 0) {
+    return (
+      <div className="rounded-lg border border-dashed border-line px-6 py-12 text-center">
+        <p className="text-[14px] font-medium text-strong">
+          Nothing starred yet
+        </p>
+        <p className="mt-1 text-[13px] text-dim">
+          Tap the star on any session and it appears here. Your list stays on
+          this device: no account, nothing sent to us.
+        </p>
+      </div>
+    );
+  }
+
+  const timed = mine.filter((s) => s.startsAt !== null);
+  const undated = mine.filter((s) => s.startsAt === null);
+  const dayList = days.length
+    ? days
+    : [...new Set(timed.map((s) => localDay(s.startsAt!, eventZone)))].sort();
+
+  /* The refs go in the URL, so the download is an ordinary link the
+     browser handles: no fetch, no blob, and it works in an iframe. */
+  const icsHref = eventSlug
+    ? `/e/${eventSlug}/calendar.ics?${mine
+        .map((s) => `s=${encodeURIComponent(s.ref)}`)
+        .join("&")}`
+    : null;
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-[13px] text-dim">
+          {mine.length} session{mine.length === 1 ? "" : "s"} starred. Kept on
+          this device only.
+        </p>
+        {icsHref && timed.length > 0 && (
+          <a
+            href={icsHref}
+            className="rounded-md border border-line-strong bg-surface px-2.5 py-1 text-[13px] font-medium text-body hover:bg-subtle"
+          >
+            Add all to calendar
+          </a>
+        )}
+      </div>
+
+      {dayList.map((day) => {
+        const onDay = timed
+          .filter((s) => localDay(s.startsAt!, eventZone) === day)
+          .sort((a, b) => a.startsAt! - b.startsAt!);
+        if (onDay.length === 0) return null;
+
+        return (
+          <section key={day}>
+            <h3 className="mb-2 text-[14px] font-semibold tracking-tight text-strong">
+              {fmtDay(day)}
+            </h3>
+            <ol className="overflow-hidden rounded-lg border border-line bg-surface">
+              {onDay.map((s) => (
+                <li
+                  key={s.id}
+                  className="flex gap-3 border-b border-line-soft p-3 last:border-0"
+                >
+                  <div className="w-20 shrink-0 pt-0.5 text-[12px] tabular-nums text-dim">
+                    {fmtTime(s.startsAt, eventZone)}
+                  </div>
+                  <div
+                    className="cb-bar w-1 shrink-0 rounded"
+                    style={hue(s.trackColor)}
+                  />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-start gap-2 text-[14px] font-medium text-strong">
+                      <StarButton
+                        session={s}
+                        starred
+                        ready
+                        onToggle={stars.toggle}
+                      />
+                      <MaybeLink
+                        to={links?.session(s.ref)}
+                        className="min-w-0 underline-offset-2 hover:underline"
+                      >
+                        {s.title}
+                      </MaybeLink>
+                    </div>
+                    {fields.showSpeakers && (
+                      <div className="mt-1">
+                        <Speakers session={s} showRole={fields.showCompany} />
+                      </div>
+                    )}
+                    <div className="mt-0.5 flex flex-wrap gap-x-3 text-[12px] text-dim">
+                      <span>{fmtRangeIn(s.startsAt, s.endsAt, eventZone)}</span>
+                      {fields.showRoom && s.roomName && <span>{s.roomName}</span>}
+                      {fields.showTrack && s.trackName && (
+                        <span>{s.trackName}</span>
+                      )}
+                      <EventTime
+                        utcMs={s.startsAt}
+                        eventZone={eventZone}
+                        viewerZone={viewerZone}
+                        secondaryOnly
+                        className="text-faint"
+                      />
+                    </div>
+                  </div>
+                </li>
+              ))}
+            </ol>
+          </section>
+        );
+      })}
+
+      {undated.length > 0 && (
+        <section>
+          <h3 className="mb-2 text-[14px] font-semibold tracking-tight text-strong">
+            Time to be confirmed
+          </h3>
+          <ol className="overflow-hidden rounded-lg border border-line bg-surface">
+            {undated.map((s) => (
+              <li
+                key={s.id}
+                className="flex items-start gap-2 border-b border-line-soft p-3 text-[14px] font-medium text-strong last:border-0"
+              >
+                <StarButton
+                  session={s}
+                  starred
+                  ready
+                  onToggle={stars.toggle}
+                />
+                <MaybeLink
+                  to={links?.session(s.ref)}
+                  className="min-w-0 underline-offset-2 hover:underline"
+                >
+                  {s.title}
+                </MaybeLink>
+              </li>
+            ))}
+          </ol>
+          <p className="mt-1 text-[12px] text-dim">
+            These are not in the calendar file: there is no time to put in it
+            yet.
+          </p>
+        </section>
+      )}
+    </div>
+  );
+}
+
 export function renderView(view: string, data: Data) {
   switch (view) {
     case "session_list":
@@ -1079,6 +1399,8 @@ export function renderView(view: string, data: Data) {
       return <ScheduleItinerary {...data} />;
     case "speaker_gallery":
       return <SpeakerGallery {...data} />;
+    case "my_schedule":
+      return <MySchedule {...data} />;
     case "agenda":
     default:
       return <AgendaGrid {...data} />;

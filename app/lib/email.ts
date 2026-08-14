@@ -82,6 +82,67 @@ export function buildIcs(i: IcsInput): string {
   return lines.map(fold).join("\r\n");
 }
 
+/* --- A calendar an attendee downloads ------------------------------ *
+ *
+ * The invitation above is a REQUEST addressed to one speaker. This is
+ * the other kind: a PUBLISH, no organiser and no attendees, one or many
+ * events, for somebody adding sessions to their own calendar. Same
+ * folding, same escaping, same date format, because a second ICS writer
+ * would be a second set of RFC 5545 mistakes.
+ *
+ * Times go out as UTC instants, which is what a calendar client wants:
+ * it renders them in whatever zone the reader is standing in, and the
+ * moment is the moment. The event's own local time is repeated in the
+ * description for anyone reading the file rather than importing it.
+ * ------------------------------------------------------------------ */
+
+export type CalendarEvent = {
+  uid: string;
+  start: Date;
+  end: Date;
+  title: string;
+  description?: string;
+  location?: string;
+  url?: string;
+};
+
+export function buildIcsCalendar(
+  events: CalendarEvent[],
+  calendarName?: string,
+): string {
+  const stamp = icsDate(new Date());
+
+  const lines: (string | null)[] = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//Callboard//EN",
+    "CALSCALE:GREGORIAN",
+    "METHOD:PUBLISH",
+    calendarName ? `X-WR-CALNAME:${esc(calendarName)}` : null,
+  ];
+
+  for (const e of events) {
+    lines.push(
+      "BEGIN:VEVENT",
+      `UID:${e.uid}`,
+      `DTSTAMP:${stamp}`,
+      `DTSTART:${icsDate(e.start)}`,
+      `DTEND:${icsDate(e.end)}`,
+      `SUMMARY:${esc(e.title)}`,
+      e.description ? `DESCRIPTION:${esc(e.description)}` : null,
+      e.location ? `LOCATION:${esc(e.location)}` : null,
+      e.url ? `URL:${esc(e.url)}` : null,
+      "STATUS:CONFIRMED",
+      "TRANSP:OPAQUE",
+      "END:VEVENT",
+    );
+  }
+
+  lines.push("END:VCALENDAR");
+
+  return (lines.filter(Boolean) as string[]).map(fold).join("\r\n");
+}
+
 /* --- Template rendering ------------------------------------------- */
 
 export function render(template: string, vars: Record<string, string>) {

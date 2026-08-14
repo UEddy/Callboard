@@ -22,6 +22,9 @@ import { dayIsoIn, partsIn, fmtTimeIn, safeZone, zoneAbbr } from "~/lib/tz";
 
 type Db = ReturnType<typeof getDb>;
 
+/* The five an organiser can embed. My schedule is not one of them: it is
+   personal to whoever is holding the phone, so there is nothing for a
+   producer to publish. */
 export const VIEWS = [
   "agenda",
   "session_list",
@@ -30,7 +33,12 @@ export const VIEWS = [
   "speaker_gallery",
 ] as const;
 
-export type View = (typeof VIEWS)[number];
+export type EmbeddableView = (typeof VIEWS)[number];
+export type View = EmbeddableView | "my_schedule";
+
+/* What the public switcher offers, which is the embeddable five plus the
+   attendee's own list. */
+export const PUBLIC_VIEWS: View[] = [...VIEWS, "my_schedule"];
 
 export const VIEW_LABEL: Record<View, string> = {
   agenda: "Agenda grid",
@@ -38,6 +46,7 @@ export const VIEW_LABEL: Record<View, string> = {
   schedule_itinerary: "Schedule itinerary",
   speaker_list: "Speakers list",
   speaker_gallery: "Speaker gallery",
+  my_schedule: "My schedule",
 };
 
 /* Each view has a URL of its own. The internal keys match the embeds
@@ -49,6 +58,7 @@ export const VIEW_SLUG: Record<View, string> = {
   speaker_list: "speakers",
   schedule_itinerary: "schedule",
   speaker_gallery: "gallery",
+  my_schedule: "my-schedule",
 };
 
 const SLUG_TO_VIEW: Record<string, View> = Object.fromEntries(
@@ -61,6 +71,11 @@ export function viewFromSlug(slug: string | undefined): View | null {
 }
 
 export function isView(v: unknown): v is View {
+  return typeof v === "string" && (PUBLIC_VIEWS as string[]).includes(v);
+}
+
+/* Embeddable formats only, for the saved-embed configuration. */
+export function isEmbeddableView(v: unknown): v is EmbeddableView {
   return typeof v === "string" && (VIEWS as readonly string[]).includes(v);
 }
 
