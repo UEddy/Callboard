@@ -10,9 +10,13 @@ export default [
   route("e/:eventSlug", "routes/e.$eventSlug.tsx"),
   // Before the catch-all view segment, so /sessions/SESS-4 is a session
   // rather than a view called "sessions" with a stray path.
+  route("e/:eventSlug/calendar.ics", "routes/e.$eventSlug.calendar.tsx"),
   route("e/:eventSlug/sessions/:ref", "routes/e.$eventSlug.sessions.$ref.tsx"),
   route("e/:eventSlug/speakers/:id", "routes/e.$eventSlug.speakers.$id.tsx"),
   route("e/:eventSlug/:view", "routes/e.$eventSlug.$view.tsx"),
+  // Outside the admin layout on purpose: the one page under /admin an
+  // unauthenticated request may reach.
+  route("admin/sign-in", "routes/admin.sign-in.tsx"),
   route("admin", "routes/admin.tsx", [
     index("routes/admin._index.tsx"),
     route("submissions", "routes/admin.submissions.tsx"),

@@ -83,8 +83,14 @@ export async function loader({ context, request }: LoaderFunctionArgs) {
     const row = await db.query.authTokens.findFirst({
       where: eq(authTokens.token, token),
     });
+    /* An organiser sign-in link is not a portal link. Both live in the
+       same table, and without this check pasting one here would open
+       the portal as that person. */
     const valid =
-      row && !row.usedAt && new Date(row.expiresAt).getTime() > Date.now();
+      row &&
+      row.purpose === "portal" &&
+      !row.usedAt &&
+      new Date(row.expiresAt).getTime() > Date.now();
 
     if (valid) {
       await db

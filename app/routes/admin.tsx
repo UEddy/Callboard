@@ -1,16 +1,29 @@
-import { NavLink, Outlet, useLoaderData } from "react-router";
+import { Form, NavLink, Outlet, useLoaderData } from "react-router";
 import type { LoaderFunctionArgs } from "react-router";
 import { eq } from "drizzle-orm";
 import { getDb, DEMO_EVENT_ID } from "~/db/client";
 import { events } from "~/db/schema";
 import { ThemeToggle } from "~/components/ThemeToggle";
+import { adminFromRequest } from "~/lib/admin-auth";
 
-export async function loader({ context }: LoaderFunctionArgs) {
+export async function loader({ context, request }: LoaderFunctionArgs) {
   const db = getDb(context);
   const event = await db.query.events.findFirst({
     where: eq(events.id, DEMO_EVENT_ID),
   });
-  return { event };
+  /* The worker has already refused this request if there is no valid
+     organiser session, so this is for showing who that is, not for
+     deciding whether to. */
+  const me = await adminFromRequest(db, request);
+  return {
+    event,
+    me: me
+      ? {
+          name: [me.firstName, me.lastName].filter(Boolean).join(" ") || me.email,
+          email: me.email,
+        }
+      : null,
+  };
 }
 
 const NAV = [
@@ -64,7 +77,7 @@ function formatRange(start?: Date | null, end?: Date | null) {
 }
 
 export default function AdminLayout() {
-  const { event } = useLoaderData<typeof loader>();
+  const { event, me } = useLoaderData<typeof loader>();
 
   return (
     <div className="min-h-screen bg-canvas text-strong">
@@ -114,6 +127,24 @@ export default function AdminLayout() {
           </nav>
 
           <div className="space-y-2 border-t border-line px-4 py-3">
+            {me && (
+              <div className="flex items-baseline justify-between gap-2 pb-1">
+                <span
+                  className="truncate text-[12px] text-dim"
+                  title={me.email}
+                >
+                  {me.name}
+                </span>
+                {/* Posts to the sign-in route, which is the one place
+                    that mints and clears the organiser cookie. */}
+                <Form method="post" action="/admin/sign-in">
+                  <input type="hidden" name="intent" value="sign_out" />
+                  <button className="shrink-0 text-[12px] text-dim underline-offset-2 hover:text-strong hover:underline">
+                    Sign out
+                  </button>
+                </Form>
+              </div>
+            )}
             <ThemeToggle />
             <a
               href={event ? `/e/${event.slug}` : "/"}

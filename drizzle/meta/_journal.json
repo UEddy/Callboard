@@ -78,6 +78,20 @@
       "when": 1786706911006,
       "tag": "0010_rich_black_crow",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1786711375466,
+      "tag": "0011_chubby_medusa",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1786735885110,
+      "tag": "0012_auth_token_purpose",
+      "breakpoints": true
     }
   ]
 }

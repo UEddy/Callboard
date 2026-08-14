@@ -1,0 +1,1 @@
+ALTER TABLE `auth_tokens` ADD `purpose` text DEFAULT 'portal' NOT NULL;

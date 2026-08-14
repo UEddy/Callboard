@@ -195,6 +195,10 @@ export const authTokens = sqliteTable("auth_tokens", {
   participantId: text("participant_id").notNull()
     .references(() => participants.id, { onDelete: "cascade" }),
   token: text("token").notNull().unique(),
+  /* "portal" or "admin". Keeps the two sign-ins from being one: an
+     organiser's portal link cannot be replayed at the organiser
+     sign-in to gain admin, and an admin link cannot open the portal. */
+  purpose: text("purpose").notNull().default("portal"),
   expiresAt: integer("expires_at", { mode: "timestamp" }).notNull(),
   usedAt: integer("used_at", { mode: "timestamp" }),
   createdAt: createdAt(),
@@ -375,6 +379,10 @@ export const assignments = sqliteTable("assignments", {
     .references(() => submissions.id, { onDelete: "cascade" }),
   round: integer("round").notNull().default(1),
   status: text("status").notNull().default("pending"), // pending | complete | skipped
+  // When this reviewer was last chased about it. Same idea as the one on
+  // task_assignments, and read the same way: a chase that failed to send
+  // does not stamp it, so "reminded 2d ago" is never a guess.
+  lastNudgedAt: integer("last_nudged_at", { mode: "timestamp" }),
   createdAt: createdAt(),
 }, (t) => [
   uniqueIndex("assignment_idx").on(t.planId, t.participantId, t.submissionId, t.round),

@@ -7,9 +7,16 @@ export const cloudflareContext = createContext<{
   ctx: ExecutionContext;
 }>();
 
+/* For code that runs outside the router and so has no context: the
+   worker's own fetch handler, which gates /admin before any route is
+   matched. */
+export function dbFromEnv(env: Env) {
+  return drizzle(env.DB, { schema });
+}
+
 export function getDb(context: RouterContextProvider) {
   const { env } = context.get(cloudflareContext);
-  return drizzle(env.DB, { schema });
+  return dbFromEnv(env);
 }
 
 export type Db = ReturnType<typeof getDb>;

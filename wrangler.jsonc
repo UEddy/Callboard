@@ -8,7 +8,11 @@
 	"compatibility_date": "2025-04-04",
 	"main": "./workers/app.ts",
 	"vars": {
-		"VALUE_FROM_CLOUDFLARE": "Hello from Cloudflare"
+		"VALUE_FROM_CLOUDFLARE": "Hello from Cloudflare",
+		// "on" prints the organiser sign-in link on screen for an address
+		// already marked is_admin, so the app can be opened without an
+		// inbox. Set to "off" on a deployment holding real submissions.
+		"ADMIN_LINK_ON_SCREEN": "on"
 	},
 	"observability": {
 		"enabled": true
