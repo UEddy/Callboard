@@ -1,0 +1,1 @@
+ALTER TABLE `email_log` ADD `recovery_link` text;

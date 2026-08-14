@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Form, useActionData, useLoaderData, useNavigation } from "react-router";
 import type { LoaderFunctionArgs, ActionFunctionArgs } from "react-router";
 import { redirect } from "react-router";
@@ -14,8 +14,7 @@ import {
   events,
   tracks,
 } from "~/db/schema";
-import { readSession, writeSession } from "~/lib/session";
-import { applyRoutingRules } from "~/lib/routing";
+import { readSession, writePortal, writeSession } from "~/lib/session";
 import {
   addableRoles,
   describeRoles,
@@ -25,6 +24,12 @@ import {
   type ParticipantIssue,
 } from "~/lib/participants";
 import { sendSubmissionConfirmation } from "~/lib/notify";
+import { formIsOpen, readProposal, saveProposal } from "~/lib/proposal";
+import {
+  ProposalFields,
+  initialProposalValues,
+  type ProposalValues,
+} from "~/components/ProposalFields";
 
 const STEPS = ["welcome", "account", "proposal", "speaker", "review"] as const;
 type Step = (typeof STEPS)[number];
@@ -44,9 +49,7 @@ export async function loader({ context, request, params }: LoaderFunctionArgs) {
     where: eq(events.id, form.eventId),
   });
 
-  const closed =
-    form.status !== "open" ||
-    (form.closeAt ? new Date(form.closeAt).getTime() < Date.now() : false);
+  const closed = !formIsOpen(form);
 
   const fields = await db
     .select({
@@ -271,40 +274,14 @@ export async function action({ context, request, params }: ActionFunctionArgs) {
 
   /* --- Proposal: core columns plus everything else into answers ----- */
   if (step === "proposal") {
-    const answers: Record<string, unknown> = {};
-    for (const [k, v] of fd.entries()) {
-      if (["step", "title", "description", "format", "level", "track"].includes(k))
-        continue;
-      answers[k] = v;
-    }
-    const trackId = String(fd.get("track") ?? "");
-    await db
-      .update(submissions)
-      .set({
-        title: String(fd.get("title") ?? ""),
-        description: String(fd.get("description") ?? ""),
-        format: String(fd.get("format") ?? "") || null,
-        level: String(fd.get("level") ?? "") || null,
-        trackId: trackId || null,
-        answers,
-        updatedAt: new Date(),
-      })
-      .where(eq(submissions.id, session.submissionId));
-
-    // Route on every save of this step, not just the first, so going back
-    // and changing the format re-evaluates instead of leaving the
-    // submission in a track chosen from an answer that no longer exists.
-    // Routing is a convenience for the organiser: if it fails, the
-    // submission is still saved and the producer can sort it out by hand.
-    try {
-      await applyRoutingRules(db, {
-        eventId: form.eventId,
-        formId: form.id,
-        submissionId: session.submissionId,
-      });
-    } catch (e) {
-      console.error("routing failed for", session.submissionId, e);
-    }
+    // Shared with the portal's edit form, so the two write the same
+    // columns and re-run routing the same way.
+    await saveProposal(db, {
+      submissionId: session.submissionId,
+      eventId: form.eventId,
+      formId: form.id,
+      patch: readProposal(fd),
+    });
 
     return redirect(`/submit/${slug}?step=speaker`);
   }
@@ -469,13 +446,27 @@ export async function action({ context, request, params }: ActionFunctionArgs) {
       );
     }
 
-    return redirect(`/submit/${slug}?step=done`, {
-      headers: {
-        "Set-Cookie": await writeSession({
-          participantId: session.participantId,
-        }),
-      },
-    });
+    /* Two cookies, so two Set-Cookie headers rather than one object.
+       The submit cookie is rewritten without the submission id, and the
+       portal cookie signs the submitter in on the way out: the success
+       step hands them straight to /portal, and landing on a sign-in
+       form after just proving who you are by filling in a whole
+       proposal is the kind of thing that loses people. The session is
+       the same one the magic link mints, so nothing new is trusted
+       here that the confirmation email did not already grant. */
+    const headers = new Headers();
+    headers.append(
+      "Set-Cookie",
+      await writeSession({ participantId: session.participantId }),
+    );
+    if (session.participantId) {
+      headers.append(
+        "Set-Cookie",
+        await writePortal({ participantId: session.participantId }),
+      );
+    }
+
+    return redirect(`/submit/${slug}?step=done`, { headers });
   }
 
   return { ok: true };
@@ -485,6 +476,56 @@ export async function action({ context, request, params }: ActionFunctionArgs) {
 
 const input =
   "mt-1 w-full rounded-lg border border-line-strong bg-surface px-3 py-2 text-[14px] outline-none placeholder:text-faint focus:border-accent-solid focus:ring-4 focus:ring-accent-ring";
+
+const PORTAL_URL = "/portal";
+const HANDOFF_SECONDS = 10;
+
+/* ------------------------------------------------------------------ *
+ * The handoff into the portal.
+ *
+ * The submitter is already signed in by the time they see this: the
+ * review action set the portal cookie alongside the submit one, so this
+ * is a plain navigation and not a login.
+ *
+ * Ten seconds, counted down where the reader can see it, with a link
+ * that goes immediately. A redirect with no warning reads as a bug to
+ * the person it happens to, and one with a countdown they cannot skip
+ * is worse. The link is also the whole of the no-JavaScript story: the
+ * timer never fires, the link still works, and the sentence above it
+ * still says where they are going.
+ * ------------------------------------------------------------------ */
+function PortalHandoff() {
+  const [left, setLeft] = useState(HANDOFF_SECONDS);
+
+  useEffect(() => {
+    if (left <= 0) {
+      window.location.assign(PORTAL_URL);
+      return;
+    }
+    const t = setTimeout(() => setLeft((n) => n - 1), 1000);
+    return () => clearTimeout(t);
+  }, [left]);
+
+  return (
+    <div className="mt-5 border-t border-line-soft pt-4">
+      <p className="text-[13px] text-body">
+        Taking you to your speaker portal in{" "}
+        <span className="font-semibold tabular-nums text-strong">{left}</span>{" "}
+        {left === 1 ? "second" : "seconds"}.
+      </p>
+      <p className="mt-0.5 text-[12px] text-dim">
+        That is where you upload your headshot and slides, and where you can
+        edit this submission while the form is open.
+      </p>
+      <a
+        href={PORTAL_URL}
+        className="mt-3 inline-block rounded-lg bg-invert px-4 py-2 text-[14px] font-medium text-invert-fg hover:bg-invert-hover"
+      >
+        Go now
+      </a>
+    </div>
+  );
+}
 
 export default function Submit() {
   const {
@@ -513,27 +554,11 @@ export default function Submit() {
   const busy = nav.state !== "idle";
 
   // Live values drive the conditional rules as the submitter types.
-  const [values, setValues] = useState<Record<string, string>>(() => {
-    const answers = (draft?.answers ?? {}) as Record<string, string>;
-    return {
-      title: draft?.title ?? "",
-      description: draft?.description ?? "",
-      format: draft?.format ?? "",
-      level: draft?.level ?? "",
-      track: draft?.trackId ?? "",
-      ...answers,
-    };
-  });
+  const [values, setValues] = useState<ProposalValues>(() =>
+    initialProposalValues(draft),
+  );
 
   const set = (k: string, v: string) => setValues((s) => ({ ...s, [k]: v }));
-
-  const visible = (f: (typeof fields)[number]) => {
-    const rule = f.conditionalRule as
-      | { showIf?: { fieldKey: string; value: string } }
-      | null;
-    if (!rule?.showIf) return true;
-    return values[rule.showIf.fieldKey] === rule.showIf.value;
-  };
 
   const proposalFields = fields.filter((f) => f.step === "submission");
   const speakerFields = fields.filter((f) => f.step === "participant");
@@ -619,6 +644,17 @@ export default function Submit() {
           className="mt-2 text-[14px] text-body"
           dangerouslySetInnerHTML={{ __html: form.successHtml ?? "" }}
         />
+
+        {form.autoRedirectToPortal ? (
+          <PortalHandoff />
+        ) : (
+          <a
+            href={PORTAL_URL}
+            className="mt-5 inline-block rounded-lg bg-invert px-4 py-2 text-[14px] font-medium text-invert-fg hover:bg-invert-hover"
+          >
+            Continue to your speaker portal
+          </a>
+        )}
       </div>,
     );
   }
@@ -716,61 +752,12 @@ export default function Submit() {
         <input type="hidden" name="step" value="proposal" />
         <h2 className="text-[16px] font-semibold">Your proposal</h2>
 
-        {proposalFields.map((f) => {
-          if (!visible(f)) return null;
-          const name = f.key === "track" ? "track" : f.key;
-          const common = {
-            name,
-            required: f.required,
-            value: values[name] ?? "",
-            onChange: (
-              e: React.ChangeEvent<
-                HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
-              >,
-            ) => set(name, e.target.value),
-            className: input,
-          };
-          return (
-            <label key={f.id} className="block">
-              <span className="text-[13px] font-medium">
-                {f.label}
-                {f.required && <span className="text-danger"> *</span>}
-              </span>
-              {f.helpText && (
-                <span className="block text-[12px] text-dim">
-                  {f.helpText}
-                </span>
-              )}
-
-              {f.key === "track" ? (
-                <select {...common}>
-                  <option value="">Choose a track</option>
-                  {trackList.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.name}
-                    </option>
-                  ))}
-                </select>
-              ) : ["dropdown", "radio"].includes(f.type) ? (
-                <select {...common}>
-                  <option value="">Choose one</option>
-                  {(f.options as string[] | null)?.map((o) => (
-                    <option key={o} value={o}>
-                      {o}
-                    </option>
-                  ))}
-                </select>
-              ) : ["textarea", "wysiwyg"].includes(f.type) ? (
-                <textarea {...common} rows={f.type === "wysiwyg" ? 6 : 3} />
-              ) : (
-                <input
-                  {...common}
-                  type={f.type === "number" ? "number" : "text"}
-                />
-              )}
-            </label>
-          );
-        })}
+        <ProposalFields
+          fields={proposalFields}
+          trackList={trackList}
+          values={values}
+          onChange={set}
+        />
 
         <div className="flex gap-2">
           <a

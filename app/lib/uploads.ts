@@ -187,3 +187,48 @@ export async function validateUpload(
 export function publicPathFor(key: string) {
   return `/files/${key.split("/").map(encodeURIComponent).join("/")}`;
 }
+
+/* Validates a File off a form and puts it in R2, returning the public
+   path or a message the person can act on. Never throws: a rejected file
+   is an ordinary outcome of asking people for files, whether the person
+   is a speaker uploading their own headshot or a producer fixing it for
+   them, so both paths run through this one implementation. */
+export async function storeUpload(
+  bucket: R2Bucket | undefined,
+  file: File,
+  kind: UploadKind,
+  eventId: string,
+  participantId: string,
+): Promise<{ ok: true; url: string } | { ok: false; message: string }> {
+  if (!bucket) {
+    return {
+      ok: false,
+      message:
+        "File storage is not set up on this deployment. Paste a link instead.",
+    };
+  }
+
+  const checked = await validateUpload(file, kind);
+  if (!checked.ok) return { ok: false, message: checked.message };
+
+  const key = buildKey(eventId, participantId, checked.filename);
+
+  try {
+    await bucket.put(key, checked.bytes, {
+      httpMetadata: { contentType: checked.contentType },
+      customMetadata: {
+        eventId,
+        participantId,
+        originalName: file.name.slice(0, 200),
+        uploadedAt: new Date().toISOString(),
+      },
+    });
+  } catch (e) {
+    return {
+      ok: false,
+      message: `The upload did not complete. Try again, or paste a link instead. (${String(e).slice(0, 120)})`,
+    };
+  }
+
+  return { ok: true, url: publicPathFor(key) };
+}

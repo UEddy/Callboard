@@ -20,12 +20,18 @@ export function EventTime({
   viewerZone,
   className,
   secondaryClassName,
+  /* Render only the viewer's reading, and nothing at all when it matches
+     the event's. For places that already state the event's time in full,
+     like a session's start-to-end range, where repeating it would read
+     as two different times. */
+  secondaryOnly = false,
 }: {
   utcMs: number | null;
   eventZone: string;
   viewerZone: string | null;
   className?: string;
   secondaryClassName?: string;
+  secondaryOnly?: boolean;
 }) {
   const [zone, setZone] = useState<string | null>(viewerZone);
 
@@ -40,10 +46,19 @@ export function EventTime({
   }, [viewerZone]);
 
   if (utcMs === null) {
+    if (secondaryOnly) return null;
     return <span className={className}>Time to be confirmed</span>;
   }
 
   const t = dualTime(utcMs, eventZone, zone);
+
+  if (secondaryOnly) {
+    if (!t.secondary) return null;
+    /* Parenthesised so it reads correctly after whatever precedes it,
+       without the caller having to add a separator that would be left
+       dangling when the zones match and this renders nothing. */
+    return <span className={className}>({t.secondary} your time)</span>;
+  }
 
   return (
     <span className={className}>

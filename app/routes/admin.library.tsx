@@ -3,27 +3,33 @@ import type { LoaderFunctionArgs, ActionFunctionArgs } from "react-router";
 import { and, asc, eq, ne } from "drizzle-orm";
 import { getDb, DEMO_EVENT_ID } from "~/db/client";
 import {
+  embeds,
   fieldDefinitions,
   formFields,
   forms,
   personas,
+  rooms,
   routingRules,
   submissions,
   tags,
+  tasks,
+  tracks,
 } from "~/db/schema";
 import { parseRoles } from "~/lib/participants";
 
 /* ------------------------------------------------------------------ *
- * The library: fields, tags and personas, defined once per event.
+ * The library: fields, tags, personas, rooms and tracks, defined once
+ * per event.
  *
  * These are the vocabulary the rest of the app is built from, which is
  * why deleting is the dangerous verb here rather than editing. A field
  * still on a form, a tag still on submissions, a persona a form's
- * participant rules still name: each of those breaks something
+ * participant rules still name, a room with sessions in it, a track a
+ * routing rule still assigns: each of those breaks something
  * elsewhere, so each one is counted and named before you can remove it.
  * ------------------------------------------------------------------ */
 
-const TABS = ["fields", "tags", "personas"] as const;
+const TABS = ["fields", "tags", "personas", "rooms", "tracks"] as const;
 type Tab = (typeof TABS)[number];
 
 export const FIELD_TYPES = [
@@ -122,31 +128,42 @@ export async function loader({ context, request }: LoaderFunctionArgs) {
     ? (raw as Tab)
     : "fields";
 
-  const [fieldList, tagList, personaList, formList] = await Promise.all([
-    db
-      .select()
-      .from(fieldDefinitions)
-      .where(eq(fieldDefinitions.eventId, DEMO_EVENT_ID))
-      .orderBy(asc(fieldDefinitions.label)),
-    db
-      .select()
-      .from(tags)
-      .where(eq(tags.eventId, DEMO_EVENT_ID))
-      .orderBy(asc(tags.name)),
-    db
-      .select()
-      .from(personas)
-      .where(eq(personas.eventId, DEMO_EVENT_ID))
-      .orderBy(asc(personas.name)),
-    db
-      .select({
-        id: forms.id,
-        name: forms.name,
-        participantRoles: forms.participantRoles,
-      })
-      .from(forms)
-      .where(eq(forms.eventId, DEMO_EVENT_ID)),
-  ]);
+  const [fieldList, tagList, personaList, formList, roomList, trackList] =
+    await Promise.all([
+      db
+        .select()
+        .from(fieldDefinitions)
+        .where(eq(fieldDefinitions.eventId, DEMO_EVENT_ID))
+        .orderBy(asc(fieldDefinitions.label)),
+      db
+        .select()
+        .from(tags)
+        .where(eq(tags.eventId, DEMO_EVENT_ID))
+        .orderBy(asc(tags.name)),
+      db
+        .select()
+        .from(personas)
+        .where(eq(personas.eventId, DEMO_EVENT_ID))
+        .orderBy(asc(personas.name)),
+      db
+        .select({
+          id: forms.id,
+          name: forms.name,
+          participantRoles: forms.participantRoles,
+        })
+        .from(forms)
+        .where(eq(forms.eventId, DEMO_EVENT_ID)),
+      db
+        .select()
+        .from(rooms)
+        .where(eq(rooms.eventId, DEMO_EVENT_ID))
+        .orderBy(asc(rooms.sortOrder), asc(rooms.name)),
+      db
+        .select()
+        .from(tracks)
+        .where(eq(tracks.eventId, DEMO_EVENT_ID))
+        .orderBy(asc(tracks.sortOrder), asc(tracks.name)),
+    ]);
 
   /* Which forms use which field. Named, not just counted: "in use on 2
      forms" makes a producer go hunting. */
@@ -165,20 +182,81 @@ export async function loader({ context, request }: LoaderFunctionArgs) {
     if (!arr.includes(name)) arr.push(name);
   }
 
-  /* Tag usage: tag_ids is a JSON array, so this is counted in memory
-     rather than pretended to be a SQL join. */
+  /* One pass over the submissions covers tags, rooms and tracks. Tag
+     usage is counted in memory because tag_ids is a JSON array rather
+     than something a join could reach. */
   const subRows = await db
-    .select({ tagIds: submissions.tagIds })
+    .select({
+      ref: submissions.ref,
+      title: submissions.title,
+      status: submissions.status,
+      roomId: submissions.roomId,
+      trackId: submissions.trackId,
+      startsAt: submissions.startsAt,
+      tagIds: submissions.tagIds,
+    })
     .from(submissions)
     .where(eq(submissions.eventId, DEMO_EVENT_ID));
+
   const tagUsage: Record<string, number> = {};
+  const roomUsage: Record<string, { ref: string; title: string; scheduled: boolean }[]> = {};
+  const trackUsage: Record<string, { ref: string; title: string }[]> = {};
   for (const s of subRows) {
     for (const id of s.tagIds ?? []) tagUsage[id] = (tagUsage[id] ?? 0) + 1;
+    if (s.roomId) {
+      (roomUsage[s.roomId] ??= []).push({
+        ref: s.ref,
+        title: s.title,
+        scheduled: s.startsAt !== null,
+      });
+    }
+    if (s.trackId) {
+      (trackUsage[s.trackId] ??= []).push({ ref: s.ref, title: s.title });
+    }
   }
 
   const ruleRows = await db
-    .select({ formId: routingRules.formId, assignTagIds: routingRules.assignTagIds })
+    .select({
+      formId: routingRules.formId,
+      assignTagIds: routingRules.assignTagIds,
+      assignTrackId: routingRules.assignTrackId,
+    })
     .from(routingRules);
+
+  /* A track is also reachable from three places a foreign key cannot
+     clean up honestly: a routing rule that assigns it, a task scoped to
+     it, and an embed filtered to it. Each is named rather than counted,
+     because "in use by 2 things" sends a producer hunting. */
+  const trackRules: Record<string, string[]> = {};
+  for (const r of ruleRows) {
+    if (!r.assignTrackId) continue;
+    const name = formNameById.get(r.formId);
+    if (!name) continue;
+    const arr = (trackRules[r.assignTrackId] ??= []);
+    if (!arr.includes(name)) arr.push(name);
+  }
+
+  const taskRows = await db
+    .select({ id: tasks.id, name: tasks.name, appliesTo: tasks.appliesTo })
+    .from(tasks)
+    .where(eq(tasks.eventId, DEMO_EVENT_ID));
+  const trackTasks: Record<string, string[]> = {};
+  for (const t of taskRows) {
+    if (!t.appliesTo.startsWith("track:")) continue;
+    (trackTasks[t.appliesTo.slice(6)] ??= []).push(t.name);
+  }
+
+  const embedRows = await db
+    .select({ id: embeds.id, name: embeds.name, filters: embeds.filters })
+    .from(embeds)
+    .where(eq(embeds.eventId, DEMO_EVENT_ID));
+  const trackEmbeds: Record<string, string[]> = {};
+  for (const e of embedRows) {
+    const t = (e.filters as { track?: unknown } | null)?.track;
+    if (typeof t !== "string" || !t) continue;
+    (trackEmbeds[t] ??= []).push(e.name);
+  }
+
   const tagRules: Record<string, string[]> = {};
   for (const r of ruleRows) {
     for (const id of r.assignTagIds ?? []) {
@@ -205,10 +283,17 @@ export async function loader({ context, request }: LoaderFunctionArgs) {
     fields: fieldList,
     tagList,
     personaList,
+    roomList,
+    trackList,
     fieldUsage,
     tagUsage,
     tagRules,
     personaUsage,
+    roomUsage,
+    trackUsage,
+    trackRules,
+    trackTasks,
+    trackEmbeds,
     palette: DEFAULT_TAG_COLOURS,
     ms: Date.now() - started,
   };
@@ -451,7 +536,257 @@ export async function action({ context, request }: ActionFunctionArgs) {
     return { saved: `Deleted "${before.name}".` };
   }
 
+  /* --- rooms ------------------------------------------------------- */
+
+  if (intent === "room_create" || intent === "room_update") {
+    const name = String(fd.get("name") ?? "").trim();
+    if (!name) return { error: "Give the room a name." };
+
+    const id = String(fd.get("id") ?? "");
+    const clash = await db.query.rooms.findFirst({
+      where: and(
+        eq(rooms.eventId, DEMO_EVENT_ID),
+        eq(rooms.name, name),
+        id ? ne(rooms.id, id) : undefined,
+      ),
+    });
+    if (clash) {
+      return {
+        error: `A room called "${name}" already exists. Two rooms with one name make the agenda grid unreadable.`,
+      };
+    }
+
+    const values = {
+      name,
+      capacity: numberOrNull(fd.get("capacity")),
+      sortOrder: Math.trunc(numberOrNull(fd.get("sortOrder")) ?? 0),
+    };
+
+    if (intent === "room_create") {
+      await db.insert(rooms).values({ eventId: DEMO_EVENT_ID, ...values });
+      return { saved: `Room "${name}" created. It is a column on the agenda now.` };
+    }
+    await db.update(rooms).set(values).where(eq(rooms.id, id));
+    return { saved: "Room updated." };
+  }
+
+  if (intent === "room_delete") {
+    const id = String(fd.get("id"));
+    const existing = await db.query.rooms.findFirst({ where: eq(rooms.id, id) });
+    if (!existing) return { error: "That room no longer exists." };
+
+    const moveTo = String(fd.get("moveTo") ?? "").trim();
+    const inRoom = await db
+      .select({ id: submissions.id, ref: submissions.ref })
+      .from(submissions)
+      .where(eq(submissions.roomId, id));
+
+    if (moveTo) {
+      const target = await db.query.rooms.findFirst({
+        where: and(eq(rooms.id, moveTo), eq(rooms.eventId, DEMO_EVENT_ID)),
+      });
+      if (!target) return { error: "That room to move them to no longer exists." };
+      await db
+        .update(submissions)
+        .set({ roomId: moveTo, updatedAt: new Date() })
+        .where(eq(submissions.roomId, id));
+      await db.delete(rooms).where(eq(rooms.id, id));
+      return {
+        saved:
+          `Deleted "${existing.name}" and moved ${countLabel(inRoom.length, "session")} into ${target.name}` +
+          (inRoom.length
+            ? `: ${inRoom.map((s) => s.ref).join(", ")}. Check the agenda for double bookings you have just created.`
+            : "."),
+      };
+    }
+
+    /* The foreign key would null these out on its own, which is exactly
+       the silent version. Doing it here means the count in the message
+       is the real one. */
+    await db
+      .update(submissions)
+      .set({ roomId: null, updatedAt: new Date() })
+      .where(eq(submissions.roomId, id));
+    await db.delete(rooms).where(eq(rooms.id, id));
+
+    return {
+      saved: inRoom.length
+        ? `Deleted "${existing.name}". ${countLabel(inRoom.length, "session")} kept the time but no longer have a room: ${inRoom.map((s) => s.ref).join(", ")}. They show as "room to be confirmed" until you place them.`
+        : `Deleted "${existing.name}". Nothing was scheduled in it.`,
+    };
+  }
+
+  /* --- tracks ------------------------------------------------------ */
+
+  if (intent === "track_create" || intent === "track_update") {
+    const name = String(fd.get("name") ?? "").trim();
+    if (!name) return { error: "Give the track a name." };
+
+    const id = String(fd.get("id") ?? "");
+    const clash = await db.query.tracks.findFirst({
+      where: and(
+        eq(tracks.eventId, DEMO_EVENT_ID),
+        eq(tracks.name, name),
+        id ? ne(tracks.id, id) : undefined,
+      ),
+    });
+    if (clash) return { error: `A track called "${name}" already exists.` };
+
+    const values = {
+      name,
+      color: String(fd.get("color") ?? "#6366f1"),
+      sortOrder: Math.trunc(numberOrNull(fd.get("sortOrder")) ?? 0),
+    };
+
+    if (intent === "track_create") {
+      await db.insert(tracks).values({ eventId: DEMO_EVENT_ID, ...values });
+      return { saved: `Track "${name}" created.` };
+    }
+    await db.update(tracks).set(values).where(eq(tracks.id, id));
+    return { saved: "Track updated." };
+  }
+
+  if (intent === "track_delete") {
+    const id = String(fd.get("id"));
+    const existing = await db.query.tracks.findFirst({
+      where: eq(tracks.id, id),
+    });
+    if (!existing) return { error: "That track no longer exists." };
+
+    const moveTo = String(fd.get("moveTo") ?? "").trim();
+    const target = moveTo
+      ? await db.query.tracks.findFirst({
+          where: and(eq(tracks.id, moveTo), eq(tracks.eventId, DEMO_EVENT_ID)),
+        })
+      : null;
+    if (moveTo && !target) {
+      return { error: "That track to move them to no longer exists." };
+    }
+
+    const onTrack = await db
+      .select({ ref: submissions.ref })
+      .from(submissions)
+      .where(eq(submissions.trackId, id));
+
+    const rules = await db
+      .select({ id: routingRules.id })
+      .from(routingRules)
+      .where(eq(routingRules.assignTrackId, id));
+
+    const scopedTasks = await db
+      .select({ id: tasks.id, name: tasks.name })
+      .from(tasks)
+      .where(
+        and(eq(tasks.eventId, DEMO_EVENT_ID), eq(tasks.appliesTo, `track:${id}`)),
+      );
+
+    const embedRows = await db
+      .select({ id: embeds.id, name: embeds.name, filters: embeds.filters })
+      .from(embeds)
+      .where(eq(embeds.eventId, DEMO_EVENT_ID));
+    const filtered = embedRows.filter(
+      (e) => (e.filters as { track?: unknown } | null)?.track === id,
+    );
+
+    await db
+      .update(submissions)
+      .set({ trackId: target ? target.id : null, updatedAt: new Date() })
+      .where(eq(submissions.trackId, id));
+
+    await db
+      .update(routingRules)
+      .set({ assignTrackId: target ? target.id : null })
+      .where(eq(routingRules.assignTrackId, id));
+
+    /* An embed filtered to a track that no longer exists renders an
+       empty programme to the public and nobody finds out until somebody
+       complains, so the filter is either re-pointed or dropped. Both
+       are stated in the message rather than left to be discovered. */
+    for (const e of filtered) {
+      const next = { ...(e.filters as Record<string, unknown>) };
+      if (target) next.track = target.id;
+      else delete next.track;
+      await db.update(embeds).set({ filters: next }).where(eq(embeds.id, e.id));
+    }
+
+    /* Tasks are the one reference not rewritten when there is nowhere to
+       move them to. A task carries real completion records for real
+       people, and quietly widening its audience to every accepted
+       speaker would assign work to people nobody meant to ask. It keeps
+       pointing at the removed track, the Tasks screen already labels
+       that "a deleted track", and the message below says so. */
+    if (target) {
+      await db
+        .update(tasks)
+        .set({ appliesTo: `track:${target.id}` })
+        .where(
+          and(
+            eq(tasks.eventId, DEMO_EVENT_ID),
+            eq(tasks.appliesTo, `track:${id}`),
+          ),
+        );
+    }
+
+    await db.delete(tracks).where(eq(tracks.id, id));
+
+    const moved: string[] = [];
+    if (onTrack.length) moved.push(countLabel(onTrack.length, "submission"));
+    if (rules.length) moved.push(countLabel(rules.length, "routing rule"));
+    if (scopedTasks.length) {
+      moved.push(
+        `${countLabel(scopedTasks.length, "task")} (${scopedTasks.map((t) => t.name).join(", ")})`,
+      );
+    }
+    if (filtered.length) {
+      moved.push(
+        `${countLabel(filtered.length, "embed")} (${filtered.map((e) => e.name).join(", ")})`,
+      );
+    }
+
+    if (target) {
+      return {
+        saved: moved.length
+          ? `Deleted "${existing.name}" and moved ${moved.join(", ")} to ${target.name}.`
+          : `Deleted "${existing.name}". Nothing was using it.`,
+      };
+    }
+
+    const cleared: string[] = [];
+    if (onTrack.length)
+      cleared.push(`${countLabel(onTrack.length, "submission")} now has no track`);
+    if (rules.length)
+      cleared.push(
+        `${countLabel(rules.length, "routing rule")} no longer assigns one`,
+      );
+    if (filtered.length)
+      cleared.push(
+        `${countLabel(filtered.length, "embed")} now shows every track rather than an empty page`,
+      );
+
+    const orphaned = scopedTasks.length
+      ? ` ${countLabel(scopedTasks.length, "task")} still points at it and now applies to nobody: ${scopedTasks.map((t) => t.name).join(", ")}. Give it a new audience on Tasks.`
+      : "";
+
+    return {
+      saved:
+        (cleared.length
+          ? `Deleted "${existing.name}". ${cleared.join(", ")}.`
+          : `Deleted "${existing.name}". Nothing was using it.`) + orphaned,
+    };
+  }
+
   return { error: "Unknown action." };
+}
+
+function numberOrNull(raw: FormDataEntryValue | null): number | null {
+  const v = String(raw ?? "").trim();
+  if (v === "") return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+function countLabel(n: number, noun: string) {
+  return `${n} ${noun}${n === 1 ? "" : "s"}`;
 }
 
 /* --- UI -------------------------------------------------------------- */
@@ -466,10 +801,17 @@ export default function Library() {
     fields,
     tagList,
     personaList,
+    roomList,
+    trackList,
     fieldUsage,
     tagUsage,
     tagRules,
     personaUsage,
+    roomUsage,
+    trackUsage,
+    trackRules,
+    trackTasks,
+    trackEmbeds,
     palette,
     ms,
   } = useLoaderData<typeof loader>();
@@ -524,11 +866,15 @@ export default function Library() {
             >
               {t}
               <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] tabular-nums text-dim">
-                {t === "fields"
-                  ? fields.length
-                  : t === "tags"
-                    ? tagList.length
-                    : personaList.length}
+                {
+                  {
+                    fields: fields.length,
+                    tags: tagList.length,
+                    personas: personaList.length,
+                    rooms: roomList.length,
+                    tracks: trackList.length,
+                  }[t]
+                }
               </span>
             </Link>
           ))}
@@ -571,6 +917,22 @@ export default function Library() {
           <PersonasTab
             personaList={personaList}
             usage={personaUsage}
+            busy={busy}
+          />
+        )}
+
+        {tab === "rooms" && (
+          <RoomsTab roomList={roomList} usage={roomUsage} busy={busy} />
+        )}
+
+        {tab === "tracks" && (
+          <TracksTab
+            trackList={trackList}
+            usage={trackUsage}
+            rules={trackRules}
+            taskNames={trackTasks}
+            embedNames={trackEmbeds}
+            palette={palette}
             busy={busy}
           />
         )}
@@ -1039,6 +1401,399 @@ function PersonasTab({
           className="cb-btn cb-btn-primary px-3 py-1.5 text-[13px]"
         >
           Add role
+        </button>
+      </Form>
+    </div>
+  );
+}
+
+/* --- Rooms ----------------------------------------------------------- */
+
+const rowInput =
+  "rounded-md border border-line-strong bg-surface px-2 py-1 text-[13px] text-strong";
+
+/* The refs, up to a handful, then a count. A producer needs to
+   recognise what they are about to disturb, not read all forty. */
+function refList(refs: string[], limit = 5) {
+  return refs.length <= limit
+    ? refs.join(", ")
+    : `${refs.slice(0, limit).join(", ")} and ${refs.length - limit} more`;
+}
+
+/* Reads the "move them to" choice out of the row's own form at click
+   time, so the confirmation describes the delete that is about to
+   happen rather than the one the producer started with. */
+function moveTarget(
+  e: React.MouseEvent<HTMLButtonElement>,
+  options: { id: string; name: string }[],
+) {
+  const select = e.currentTarget.form?.elements.namedItem("moveTo");
+  const value = select instanceof HTMLSelectElement ? select.value : "";
+  return value ? (options.find((o) => o.id === value) ?? null) : null;
+}
+
+function RoomsTab({
+  roomList,
+  usage,
+  busy,
+}: {
+  roomList: { id: string; name: string; capacity: number | null; sortOrder: number }[];
+  usage: Record<string, { ref: string; title: string; scheduled: boolean }[]>;
+  busy: boolean;
+}) {
+  return (
+    <div className="space-y-4">
+      <p className="text-[13px] text-dim">
+        The columns on the{" "}
+        <Link
+          to="/admin/agenda"
+          className="text-accent-text underline underline-offset-2"
+        >
+          agenda grid
+        </Link>
+        , in this order. Capacity is shown beside the name there, so a
+        producer can see at a glance when a popular talk is in the small
+        room.
+      </p>
+
+      <ul className="divide-y divide-line-soft overflow-hidden rounded-lg border border-line bg-surface">
+        {roomList.length === 0 && (
+          <li className="px-4 py-10 text-center text-[13px] text-dim">
+            No rooms yet. The agenda grid has nothing to put sessions in until
+            there is at least one.
+          </li>
+        )}
+        {roomList.map((r) => {
+          const used = usage[r.id] ?? [];
+          const others = roomList.filter((o) => o.id !== r.id);
+          return (
+            <li key={r.id} className="p-3">
+              <Form method="post">
+                <input type="hidden" name="intent" value="room_update" />
+                <input type="hidden" name="id" value={r.id} />
+                <div className="flex flex-wrap items-center gap-2">
+                <input
+                  name="name"
+                  defaultValue={r.name}
+                  aria-label={`Name of ${r.name}`}
+                  className={`${rowInput} w-48`}
+                />
+                <label className="flex items-center gap-1.5 text-[12px] text-dim">
+                  Seats
+                  <input
+                    name="capacity"
+                    type="number"
+                    min={0}
+                    defaultValue={r.capacity ?? ""}
+                    className={`${rowInput} w-20`}
+                  />
+                </label>
+                <label className="flex items-center gap-1.5 text-[12px] text-dim">
+                  Order
+                  <input
+                    name="sortOrder"
+                    type="number"
+                    defaultValue={r.sortOrder}
+                    className={`${rowInput} w-16`}
+                  />
+                </label>
+
+                <div className="ml-auto flex items-center gap-2">
+                  {used.length > 0 && others.length > 0 && (
+                    <select
+                      name="moveTo"
+                      aria-label={`On delete, move sessions out of ${r.name} to`}
+                      className={`${rowInput} w-44`}
+                      defaultValue=""
+                      title="What happens to the sessions in this room if you delete it"
+                    >
+                      <option value="">Delete leaves them roomless</option>
+                      {others.map((o) => (
+                        <option key={o.id} value={o.id}>
+                          Delete moves them to {o.name}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                  <button
+                    disabled={busy}
+                    className="cb-btn cb-btn-secondary px-2 py-1 text-[12px]"
+                  >
+                    Save
+                  </button>
+                  <button
+                    formAction="/admin/library?tab=rooms"
+                    name="intent"
+                    value="room_delete"
+                    disabled={busy}
+                    onClick={(e) => {
+                      const target = moveTarget(e, others);
+                      const msg = used.length
+                        ? `"${r.name}" has ${used.length} session${used.length === 1 ? "" : "s"} in it: ${refList(used.map((s) => s.ref))}.\n\n` +
+                          (target
+                            ? `Deleting moves ${used.length === 1 ? "it" : "them"} into ${target.name}, keeping the same times. Check the agenda afterwards: two sessions at one time in one room is a conflict.\n\nDelete anyway?`
+                            : `Deleting keeps their times and leaves them with no room, showing as "room to be confirmed" until you place them again.\n\nDelete anyway?`)
+                        : `Delete "${r.name}"? Nothing is scheduled in it.`;
+                      if (!confirm(msg)) e.preventDefault();
+                    }}
+                    className="cb-btn cb-btn-danger px-2 py-1 text-[12px]"
+                  >
+                    Delete
+                  </button>
+                </div>
+                </div>
+
+                <p className="mt-1.5 text-[12px] text-dim">
+                  {used.length === 0
+                    ? "Nothing scheduled here"
+                    : `${used.length} session${used.length === 1 ? "" : "s"}: ${refList(used.map((s) => s.ref))}`}
+                </p>
+              </Form>
+            </li>
+          );
+        })}
+      </ul>
+
+      <Form
+        method="post"
+        className="flex flex-wrap items-end gap-2 rounded-lg border border-line bg-surface p-4"
+      >
+        <input type="hidden" name="intent" value="room_create" />
+        <label className="block">
+          <span className="text-[13px] font-medium">New room</span>
+          <input name="name" placeholder="Golden Gate Ballroom" className={field} />
+        </label>
+        <label className="block">
+          <span className="text-[13px] font-medium">Seats</span>
+          <input
+            name="capacity"
+            type="number"
+            min={0}
+            placeholder="400"
+            className={`${field} w-28`}
+          />
+        </label>
+        <label className="block">
+          <span className="text-[13px] font-medium">Order</span>
+          <input
+            name="sortOrder"
+            type="number"
+            defaultValue={roomList.length}
+            className={`${field} w-24`}
+          />
+        </label>
+        <button
+          disabled={busy}
+          className="cb-btn cb-btn-primary px-3 py-1.5 text-[13px]"
+        >
+          Add room
+        </button>
+      </Form>
+    </div>
+  );
+}
+
+/* --- Tracks ---------------------------------------------------------- */
+
+function TracksTab({
+  trackList,
+  usage,
+  rules,
+  taskNames,
+  embedNames,
+  palette,
+  busy,
+}: {
+  trackList: { id: string; name: string; color: string; sortOrder: number }[];
+  usage: Record<string, { ref: string; title: string }[]>;
+  rules: Record<string, string[]>;
+  taskNames: Record<string, string[]>;
+  embedNames: Record<string, string[]>;
+  palette: string[];
+  busy: boolean;
+}) {
+  return (
+    <div className="space-y-4">
+      <p className="text-[13px] text-dim">
+        The programme's subject strands. The colour is the dot that identifies
+        a session everywhere it appears: the submissions list, the{" "}
+        <Link
+          to="/admin/agenda?view=track"
+          className="text-accent-text underline underline-offset-2"
+        >
+          agenda
+        </Link>{" "}
+        and the public programme.
+      </p>
+
+      <ul className="divide-y divide-line-soft overflow-hidden rounded-lg border border-line bg-surface">
+        {trackList.length === 0 && (
+          <li className="px-4 py-10 text-center text-[13px] text-dim">
+            No tracks yet. Submissions can still be collected and scheduled;
+            they just will not be grouped by subject anywhere.
+          </li>
+        )}
+        {trackList.map((t) => {
+          const subs = usage[t.id] ?? [];
+          const usedByRules = rules[t.id] ?? [];
+          const usedByTasks = taskNames[t.id] ?? [];
+          const usedByEmbeds = embedNames[t.id] ?? [];
+          const others = trackList.filter((o) => o.id !== t.id);
+
+          const usageBits = [
+            subs.length ? `${subs.length} submission${subs.length === 1 ? "" : "s"}` : null,
+            usedByRules.length ? `assigned by a rule on ${usedByRules.join(", ")}` : null,
+            usedByTasks.length ? `scoping ${usedByTasks.join(", ")}` : null,
+            usedByEmbeds.length ? `filtering ${usedByEmbeds.join(", ")}` : null,
+          ].filter(Boolean) as string[];
+
+          return (
+            <li key={t.id} className="p-3">
+              <Form method="post">
+                <input type="hidden" name="intent" value="track_update" />
+                <input type="hidden" name="id" value={t.id} />
+                <div className="flex flex-wrap items-center gap-2">
+                <span
+                  className="cb-dot h-2.5 w-2.5 shrink-0"
+                  style={{ ["--cb-hue"]: t.color } as React.CSSProperties}
+                />
+                <input
+                  name="name"
+                  defaultValue={t.name}
+                  aria-label={`Name of ${t.name}`}
+                  className={`${rowInput} w-48`}
+                />
+                <input
+                  name="color"
+                  type="color"
+                  defaultValue={t.color}
+                  aria-label={`Colour for ${t.name}`}
+                  className="h-8 w-12 rounded border border-line-strong bg-surface"
+                />
+                <label className="flex items-center gap-1.5 text-[12px] text-dim">
+                  Order
+                  <input
+                    name="sortOrder"
+                    type="number"
+                    defaultValue={t.sortOrder}
+                    className={`${rowInput} w-16`}
+                  />
+                </label>
+                <div className="ml-auto flex items-center gap-2">
+                  {usageBits.length > 0 && others.length > 0 && (
+                    <select
+                      name="moveTo"
+                      aria-label={`On delete, move everything on ${t.name} to`}
+                      className={`${rowInput} w-44`}
+                      defaultValue=""
+                      title="What happens to everything on this track if you delete it"
+                    >
+                      <option value="">Delete clears the track</option>
+                      {others.map((o) => (
+                        <option key={o.id} value={o.id}>
+                          Delete moves it to {o.name}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                  <button
+                    disabled={busy}
+                    className="cb-btn cb-btn-secondary px-2 py-1 text-[12px]"
+                  >
+                    Save
+                  </button>
+                  <button
+                    formAction="/admin/library?tab=tracks"
+                    name="intent"
+                    value="track_delete"
+                    disabled={busy}
+                    onClick={(e) => {
+                      const target = moveTarget(e, others);
+                      if (!usageBits.length) {
+                        if (!confirm(`Delete "${t.name}"? Nothing is using it.`))
+                          e.preventDefault();
+                        return;
+                      }
+
+                      const affected = [
+                        subs.length
+                          ? `${subs.length} submission${subs.length === 1 ? "" : "s"} (${refList(subs.map((s) => s.ref))})`
+                          : null,
+                        usedByRules.length
+                          ? `a routing rule on ${usedByRules.join(", ")}`
+                          : null,
+                        usedByTasks.length
+                          ? `the task${usedByTasks.length === 1 ? "" : "s"} ${usedByTasks.join(", ")}`
+                          : null,
+                        usedByEmbeds.length
+                          ? `the embed${usedByEmbeds.length === 1 ? "" : "s"} ${usedByEmbeds.join(", ")}`
+                          : null,
+                      ].filter(Boolean);
+
+                      const consequence = target
+                        ? `All of it moves to ${target.name}.`
+                        : [
+                            subs.length ? "The submissions keep everything else and lose their track." : null,
+                            usedByRules.length ? "The rule stops assigning a track." : null,
+                            usedByEmbeds.length ? "The embed shows every track instead of an empty page." : null,
+                            usedByTasks.length
+                              ? `${usedByTasks.join(", ")} will apply to nobody until you give it a new audience on Tasks.`
+                              : null,
+                          ]
+                            .filter(Boolean)
+                            .join(" ");
+
+                      const msg = `"${t.name}" is in use by ${affected.join(", ")}.\n\n${consequence}\n\nDelete anyway?`;
+                      if (!confirm(msg)) e.preventDefault();
+                    }}
+                    className="cb-btn cb-btn-danger px-2 py-1 text-[12px]"
+                  >
+                    Delete
+                  </button>
+                </div>
+                </div>
+
+                <p className="mt-1.5 text-[12px] text-dim">
+                  {usageBits.length ? usageBits.join(", ") : "Not used anywhere"}
+                </p>
+              </Form>
+            </li>
+          );
+        })}
+      </ul>
+
+      <Form
+        method="post"
+        className="flex flex-wrap items-end gap-2 rounded-lg border border-line bg-surface p-4"
+      >
+        <input type="hidden" name="intent" value="track_create" />
+        <label className="block">
+          <span className="text-[13px] font-medium">New track</span>
+          <input name="name" placeholder="Agents & Tool Use" className={field} />
+        </label>
+        <label className="block">
+          <span className="text-[13px] font-medium">Colour</span>
+          <input
+            name="color"
+            type="color"
+            defaultValue={palette[trackList.length % palette.length]}
+            className="mt-1 block h-9 w-16 rounded border border-line-strong bg-surface"
+          />
+        </label>
+        <label className="block">
+          <span className="text-[13px] font-medium">Order</span>
+          <input
+            name="sortOrder"
+            type="number"
+            defaultValue={trackList.length}
+            className={`${field} w-24`}
+          />
+        </label>
+        <button
+          disabled={busy}
+          className="cb-btn cb-btn-primary px-3 py-1.5 text-[13px]"
+        >
+          Add track
         </button>
       </Form>
     </div>

@@ -1,7 +1,13 @@
-import { Form, Link, useLoaderData, useNavigation } from "react-router";
+import {
+  Form,
+  Link,
+  useActionData,
+  useLoaderData,
+  useNavigation,
+} from "react-router";
 import type { LoaderFunctionArgs, ActionFunctionArgs } from "react-router";
-import { and, eq, inArray, sql } from "drizzle-orm";
-import { getDb, DEMO_EVENT_ID } from "~/db/client";
+import { and, asc, eq, inArray } from "drizzle-orm";
+import { getDb, DEMO_EVENT_ID, cloudflareContext } from "~/db/client";
 import {
   submissions,
   submissionParticipants,
@@ -9,7 +15,13 @@ import {
   tasks,
   taskAssignments,
   emailLog,
+  emailTemplates,
+  events,
 } from "~/db/schema";
+import { render, sendEmail } from "~/lib/email";
+import { mergeVars, usesMagicLink } from "~/lib/emails";
+import { mintSignInLink } from "~/lib/people";
+import { fmtDateIn, safeZone } from "~/lib/tz";
 
 /* ------------------------------------------------------------------ *
  * The screen a producer lives in during the two weeks before an event:
@@ -159,10 +171,23 @@ export async function loader({ context }: LoaderFunctionArgs) {
   return { taskList, rows: sorted, totals, ms: Date.now() - started };
 }
 
+/* Used until somebody edits the task_reminder template, so a fresh
+   install can chase speakers rather than silently doing nothing. */
+const DEFAULT_TASK_REMINDER = {
+  subject: "Still need a few things from you for {{event.name}}",
+  bodyHtml:
+    "<p>Hi {{participant.firstName}},</p>" +
+    "<p>You have {{openTaskCount}} outstanding item(s) before {{event.name}}:</p>" +
+    "{{taskList}}" +
+    '<p><a href="{{portalUrl}}">Complete them here</a></p>',
+};
+
 export async function action({ context, request }: ActionFunctionArgs) {
   const db = getDb(context);
+  const env = context.get(cloudflareContext).env;
   const fd = await request.formData();
   const intent = String(fd.get("intent") ?? "");
+  const origin = new URL(request.url).origin;
   const now = new Date();
 
   const targets =
@@ -173,35 +198,186 @@ export async function action({ context, request }: ActionFunctionArgs) {
   const ids = targets.filter(Boolean);
   if (!ids.length) return { ok: false };
 
-  // Mark the chase, then queue one reminder per speaker. The email log is
-  // what makes "reminded 2 days ago" true rather than decorative.
-  await db
-    .update(taskAssignments)
-    .set({ lastNudgedAt: now })
-    .where(
-      and(
-        inArray(taskAssignments.participantId, ids),
-        inArray(taskAssignments.status, ["not_started", "in_progress"]),
-      ),
-    );
+  const event = await db.query.events.findFirst({
+    where: eq(events.id, DEMO_EVENT_ID),
+  });
+  const zone = safeZone(event?.timezone);
+
+  const tpl = await db.query.emailTemplates.findFirst({
+    where: and(
+      eq(emailTemplates.eventId, DEMO_EVENT_ID),
+      eq(emailTemplates.key, "task_reminder"),
+    ),
+  });
+
+  // A template row that exists but is switched off is a deliberate
+  // choice, and the button should say so rather than send anyway.
+  if (tpl && !tpl.enabled) {
+    return {
+      ok: false,
+      message:
+        "The task reminder template is switched off, so nothing was sent. Turn it back on before chasing anyone.",
+    };
+  }
 
   const people = await db
-    .select({ id: participants.id, email: participants.email })
+    .select({
+      id: participants.id,
+      email: participants.email,
+      firstName: participants.firstName,
+      lastName: participants.lastName,
+      company: participants.company,
+      jobTitle: participants.jobTitle,
+    })
     .from(participants)
     .where(inArray(participants.id, ids));
 
-  for (const p of people) {
-    await db.insert(emailLog).values({
-      eventId: DEMO_EVENT_ID,
-      participantId: p.id,
-      templateKey: "task_reminder",
-      toEmail: p.email,
-      subject: "Still need a few things from you",
-      status: "queued",
-    });
+  /* What each person actually still owes. A reminder that lists nothing,
+     or lists something they finished last week, is worse than no
+     reminder: it teaches them to ignore the next one. */
+  const openRows = await db
+    .select({
+      participantId: taskAssignments.participantId,
+      status: taskAssignments.status,
+      taskName: tasks.name,
+      dueAt: tasks.dueAt,
+      required: tasks.required,
+    })
+    .from(taskAssignments)
+    .innerJoin(tasks, eq(taskAssignments.taskId, tasks.id))
+    .where(
+      and(
+        inArray(taskAssignments.participantId, ids),
+        eq(tasks.eventId, DEMO_EVENT_ID),
+        inArray(taskAssignments.status, ["not_started", "in_progress"]),
+      ),
+    )
+    .orderBy(asc(tasks.sortOrder));
+
+  const openBy = new Map<string, { name: string; dueAt: Date | null }[]>();
+  for (const r of openRows) {
+    const arr = openBy.get(r.participantId) ?? [];
+    arr.push({ name: r.taskName, dueAt: r.dueAt ? new Date(r.dueAt) : null });
+    openBy.set(r.participantId, arr);
   }
 
-  return { ok: true, nudged: ids.length };
+  let sent = 0;
+  let queued = 0;
+  let failed = 0;
+  let skipped = 0;
+  let firstError: string | null = null;
+
+  const needsLink = usesMagicLink(
+    tpl?.subject ?? DEFAULT_TASK_REMINDER.subject,
+    tpl?.bodyHtml ?? DEFAULT_TASK_REMINDER.bodyHtml,
+  );
+
+  for (const person of people) {
+    const open = openBy.get(person.id) ?? [];
+    if (open.length === 0) {
+      skipped++;
+      continue;
+    }
+
+    const magicLinkUrl = needsLink
+      ? await mintSignInLink(db, person.id, origin)
+      : "";
+
+    const listHtml =
+      "<ul>" +
+      open
+        .map(
+          (t) =>
+            `<li>${escapeHtml(t.name)}${
+              t.dueAt
+                ? `, due ${escapeHtml(
+                    fmtDateIn(t.dueAt.getTime(), zone, {
+                      month: "long",
+                      day: "numeric",
+                    }),
+                  )}`
+                : ""
+            }</li>`,
+        )
+        .join("") +
+      "</ul>";
+
+    const vars = {
+      ...mergeVars(person, event, origin, magicLinkUrl),
+      openTaskCount: String(open.length),
+      taskList: listHtml,
+    };
+
+    const subject = render(tpl?.subject ?? DEFAULT_TASK_REMINDER.subject, vars);
+    const html = render(tpl?.bodyHtml ?? DEFAULT_TASK_REMINDER.bodyHtml, vars);
+
+    const result = await sendEmail(env, { to: person.email, subject, html });
+
+    if (!result.ok) {
+      failed++;
+      firstError ??= result.error ?? "send failed";
+    } else if (result.simulated) queued++;
+    else sent++;
+
+    await db.insert(emailLog).values({
+      eventId: DEMO_EVENT_ID,
+      participantId: person.id,
+      templateKey: "task_reminder",
+      toEmail: person.email,
+      subject,
+      bodyHtml: html,
+      status: result.ok ? (result.simulated ? "queued" : "sent") : "failed",
+      error: result.error ?? null,
+      recoveryLink: !result.ok && magicLinkUrl ? magicLinkUrl : null,
+      sentAt: result.ok && !result.simulated ? new Date() : null,
+    });
+
+    /* "Reminded yesterday" has to mean a reminder left the building. A
+       send that failed at the provider leaves the cooldown clear so the
+       producer can try again once the problem is fixed. */
+    if (result.ok) {
+      await db
+        .update(taskAssignments)
+        .set({ lastNudgedAt: now })
+        .where(
+          and(
+            eq(taskAssignments.participantId, person.id),
+            inArray(taskAssignments.status, ["not_started", "in_progress"]),
+          ),
+        );
+    }
+  }
+
+  const bits: string[] = [];
+  if (sent) bits.push(`${sent} reminder${sent === 1 ? "" : "s"} sent`);
+  if (queued)
+    bits.push(
+      `${queued} logged but not delivered, because no mail provider is configured`,
+    );
+  if (failed) bits.push(`${failed} failed`);
+  if (skipped)
+    bits.push(
+      `${skipped} skipped with nothing outstanding`,
+    );
+
+  return {
+    ok: failed === 0,
+    sent,
+    queued,
+    failed,
+    message:
+      (bits.length ? `${bits.join(", ")}.` : "Nobody had anything outstanding.") +
+      (firstError ? ` First error: ${firstError.slice(0, 200)}` : ""),
+  };
+}
+
+/* The task names come from the producer and land in an HTML email. */
+function escapeHtml(s: string) {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 
 const CELL: Record<string, { dot: string; label: string }> = {
@@ -222,6 +398,11 @@ function agoLabel(ms: number | null) {
 
 export default function Onboarding() {
   const { taskList, rows, totals, ms } = useLoaderData<typeof loader>();
+  const action = useActionData<{
+    ok?: boolean;
+    failed?: number;
+    message?: string;
+  }>();
   const nav = useNavigation();
   const busy = nav.state !== "idle";
 
@@ -274,6 +455,23 @@ export default function Onboarding() {
       </div>
 
       <div className="px-6 py-4">
+        {action?.message && (
+          <p
+            className={[
+              "cb-note mb-3 px-3 py-2.5 text-[13px]",
+              action.failed ? "cb-note-warn" : "cb-note-success",
+            ].join(" ")}
+          >
+            {action.message}{" "}
+            <Link
+              to="/admin/emails?template=task_reminder"
+              className="underline underline-offset-2"
+            >
+              Every one is in the email log.
+            </Link>
+          </p>
+        )}
+
         {laggards.length > 0 && (
           <Form method="post" className="mb-3">
             <input type="hidden" name="intent" value="nudge_all" />

@@ -131,8 +131,14 @@ export async function sendSubmissionConfirmation(
       templateKey: "submission_confirmation",
       toEmail: person.email,
       subject,
+      bodyHtml: html,
       status: result.ok ? (result.simulated ? "queued" : "sent") : "failed",
       error: result.error ?? null,
+      // The confirmation carries a sign-in link. If it bounced, the
+      // organiser can hand that link over from the email log rather
+      // than the submitter being locked out of the proposal they just
+      // wrote. Kept on failure only.
+      recoveryLink: result.ok ? null : vars.magicLinkUrl,
       sentAt: result.ok && !result.simulated ? new Date() : null,
     });
 

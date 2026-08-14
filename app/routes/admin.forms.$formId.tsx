@@ -3,7 +3,7 @@ import { Form, Link, useLoaderData, useNavigation } from "react-router";
 import type { LoaderFunctionArgs, ActionFunctionArgs } from "react-router";
 import { eq, and, asc } from "drizzle-orm";
 import { getDb, DEMO_EVENT_ID } from "~/db/client";
-import { forms, formFields, fieldDefinitions, personas } from "~/db/schema";
+import { events, forms, formFields, fieldDefinitions, personas } from "~/db/schema";
 import {
   DEFAULT_ROLES,
   describeRoles,
@@ -11,6 +11,13 @@ import {
   plural,
   type RoleRule,
 } from "~/lib/participants";
+import {
+  fmtDateIn,
+  fromZonedInput,
+  safeZone,
+  toZonedInput,
+  zoneAbbr,
+} from "~/lib/tz";
 
 export async function loader({ context, params }: LoaderFunctionArgs) {
   const started = Date.now();
@@ -53,11 +60,29 @@ export async function loader({ context, params }: LoaderFunctionArgs) {
     .from(personas)
     .where(eq(personas.eventId, DEMO_EVENT_ID));
 
+  /* The deadline is a moment in the event's timezone, not the
+     producer's, so the builder has to know which zone that is before it
+     can render or accept one. */
+  const event = await db.query.events.findFirst({
+    where: eq(events.id, DEMO_EVENT_ID),
+  });
+  const zone = safeZone(event?.timezone);
+  const closeAtMs = form.closeAt ? new Date(form.closeAt).getTime() : null;
+
   return {
     form,
     fields,
     library,
     personaList,
+    eventZone: zone,
+    zoneLabel: zoneAbbr(closeAtMs ?? Date.now(), zone),
+    closeAtInput: toZonedInput(closeAtMs, zone),
+    closeAtLabel: closeAtMs
+      ? `${fmtDateIn(closeAtMs, zone, { month: "long", day: "numeric", year: "numeric" })} at ${new Intl.DateTimeFormat(
+          "en-US",
+          { hour: "numeric", minute: "2-digit", timeZone: zone },
+        ).format(closeAtMs)} ${zoneAbbr(closeAtMs, zone)}`
+      : null,
     roles: parseRoles(form.participantRoles),
     ms: Date.now() - started,
   };
@@ -160,17 +185,26 @@ export async function action({ context, request, params }: ActionFunctionArgs) {
   if (intent === "save_settings") {
     const closeRaw = String(fd.get("closeAt") ?? "");
     const limitRaw = String(fd.get("submissionLimit") ?? "");
+    /* Read against the event's zone, the same way Settings does and the
+       same way the field is labelled. `new Date("2026-10-01T17:00")`
+       would have used whatever zone the server happens to run in, which
+       on Workers is UTC and is nobody's deadline. */
+    const ev = await db.query.events.findFirst({
+      where: eq(events.id, DEMO_EVENT_ID),
+    });
+    const closeAt = fromZonedInput(closeRaw, safeZone(ev?.timezone));
     await db
       .update(forms)
       .set({
         name: String(fd.get("name") ?? "Untitled form"),
         welcomeHtml: String(fd.get("welcomeHtml") ?? ""),
         successHtml: String(fd.get("successHtml") ?? ""),
-        closeAt: closeRaw ? new Date(closeRaw) : null,
+        closeAt: closeAt,
         submissionLimit: limitRaw ? Number(limitRaw) : null,
         allowMultipleDrafts: fd.get("allowMultipleDrafts") === "on",
         collectParticipants: fd.get("collectParticipants") === "on",
         confirmSubmitter: fd.get("confirmSubmitter") === "on",
+        autoRedirectToPortal: fd.get("autoRedirectToPortal") === "on",
         updatedAt: new Date(),
       })
       .where(eq(forms.id, formId));
@@ -316,16 +350,18 @@ export async function action({ context, request, params }: ActionFunctionArgs) {
   return { ok: true };
 }
 
-function toDateInput(d: Date | string | null | undefined) {
-  if (!d) return "";
-  const date = new Date(d);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
-}
-
 export default function FormBuilder() {
-  const { form, fields, library, personaList, roles, ms } =
-    useLoaderData<typeof loader>();
+  const {
+    form,
+    fields,
+    library,
+    personaList,
+    roles,
+    zoneLabel,
+    closeAtInput,
+    closeAtLabel,
+    ms,
+  } = useLoaderData<typeof loader>();
   const nav = useNavigation();
   const busy = nav.state !== "idle";
   const [openCond, setOpenCond] = useState<string | null>(null);
@@ -769,11 +805,16 @@ export default function FormBuilder() {
 
             <div className="flex flex-wrap gap-4">
               <label className="block">
-                <span className="text-[13px] font-medium">Closes</span>
+                <span className="text-[13px] font-medium">
+                  Closes{" "}
+                  <span className="font-normal text-dim">
+                    ({zoneLabel}, the event's time)
+                  </span>
+                </span>
                 <input
                   type="datetime-local"
                   name="closeAt"
-                  defaultValue={toDateInput(form.closeAt)}
+                  defaultValue={closeAtInput}
                   className="mt-1 block rounded-md border border-line-strong px-2.5 py-1.5 text-[13px]"
                 />
               </label>
@@ -812,6 +853,24 @@ export default function FormBuilder() {
                 className="h-4 w-4 rounded border-line-strong"
               />
               <span className="text-[13px]">Collect speaker details</span>
+            </label>
+
+            <label className="flex items-start gap-2">
+              <input
+                type="checkbox"
+                name="autoRedirectToPortal"
+                defaultChecked={form.autoRedirectToPortal}
+                className="mt-0.5 h-4 w-4 rounded border-line-strong"
+              />
+              <span className="text-[13px]">
+                Send submitters to their portal when they finish
+                <span className="block text-[12px] text-dim">
+                  The thank you message shows with a ten second countdown and a
+                  link that goes immediately, then they land in the portal
+                  already signed in. Off means a Continue button instead, and
+                  nothing moves on its own.
+                </span>
+              </span>
             </label>
 
             {/* Notifications */}
@@ -853,9 +912,12 @@ export default function FormBuilder() {
               {form.allowMultipleDrafts
                 ? "They can work on several drafts at once."
                 : "They can only have one draft in progress, and must finish or delete it before starting another."}
-              {form.closeAt
-                ? ` The form stops accepting entries on ${new Date(form.closeAt).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}.`
+              {closeAtLabel
+                ? ` The form stops accepting entries on ${closeAtLabel}.`
                 : " There is no deadline, so it stays open until you close it."}
+              {form.autoRedirectToPortal
+                ? " When they finish, they are sent to their speaker portal after a ten second countdown, already signed in."
+                : " When they finish, they stay on the thank you page until they press Continue."}
             </div>
 
             <label className="block">

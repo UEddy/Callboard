@@ -120,6 +120,14 @@ export const forms = sqliteTable("forms", {
     .notNull()
     .default(true),
 
+  // Send the submitter into their portal once they finish, signed in,
+  // after a visible countdown. On by default: the moment someone has
+  // just submitted is the one moment they will happily upload a
+  // headshot, and a "thanks, goodbye" page spends it.
+  autoRedirectToPortal: integer("auto_redirect_to_portal", { mode: "boolean" })
+    .notNull()
+    .default(true),
+
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 }, (t) => [index("forms_event_idx").on(t.eventId)]);
@@ -165,6 +173,11 @@ export const participants = sqliteTable("participants", {
   jobTitle: text("job_title"),
   phone: text("phone"),
   bio: text("bio"),
+  // Free text, both of them, and both optional. A fixed list is a
+  // promise that the list is complete, and neither of these has a
+  // complete list. The portal offers common values as suggestions.
+  pronouns: text("pronouns"),
+  gender: text("gender"),
   headshotUrl: text("headshot_url"),
   // { linkedin, twitter, facebook, website }
   links: text("links", { mode: "json" }).$type<Record<string, string>>(),
@@ -320,9 +333,22 @@ export const evaluationPlans = sqliteTable("evaluation_plans", {
   id: id(),
   eventId: text("event_id").notNull().references(() => events.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
-  // [{ key, name, weight, description }]
+  /* [{ key, name, weight, description, type, options }]
+     type: numeric | dropdown | text. Absent means numeric, so plans
+     written before types existed keep working untouched.
+     options: [{ label, value }] for dropdown, where the value is what
+     feeds the weighted score. */
   criteria: text("criteria", { mode: "json" })
-    .$type<{ key: string; name: string; weight: number; description?: string }[]>(),
+    .$type<
+      {
+        key: string;
+        name: string;
+        weight: number;
+        description?: string;
+        type?: "numeric" | "dropdown" | "text";
+        options?: { label: string; value: number }[];
+      }[]
+    >(),
   scaleMin: integer("scale_min").notNull().default(1),
   scaleMax: integer("scale_max").notNull().default(5),
   rounds: integer("rounds").notNull().default(1),
@@ -361,7 +387,10 @@ export const scores = sqliteTable("scores", {
   assignmentId: text("assignment_id").notNull()
     .references(() => assignments.id, { onDelete: "cascade" }),
   criterionKey: text("criterion_key").notNull(),
-  value: integer("value").notNull(),
+  /* Null for a free text criterion, which has an answer but no number.
+     Storing a nought there would put a zero into every weighted average
+     that ever read it. */
+  value: integer("value"),
   comment: text("comment"),
   createdAt: createdAt(),
 }, (t) => [uniqueIndex("score_idx").on(t.assignmentId, t.criterionKey)]);
@@ -390,8 +419,20 @@ export const emailLog = sqliteTable("email_log", {
   templateKey: text("template_key").notNull(),
   toEmail: text("to_email").notNull(),
   subject: text("subject").notNull(),
+  // What was actually sent, after merge fields were substituted. Kept so
+  // the log can answer "what did they receive", which is the only
+  // question anyone asks it when a speaker says they never got it.
+  bodyHtml: text("body_html"),
   status: text("status").notNull().default("queued"), // queued | sent | failed
   error: text("error"),
+  /* The sign-in link this mail carried, kept only when the send failed.
+     A magic link that never reached its inbox is a person locked out of
+     their own portal, and the token is already minted and already
+     single use, so recording it here turns a bounce into something an
+     organiser can hand over rather than a dead end. Successful sends do
+     not keep it: the link is in the inbox where it belongs, and a live
+     credential sitting in a log nobody needed to read is a liability. */
+  recoveryLink: text("recovery_link"),
   // Bumped on every re-send so calendar clients update rather than duplicate.
   icsUid: text("ics_uid"),
   icsSequence: integer("ics_sequence").default(0),

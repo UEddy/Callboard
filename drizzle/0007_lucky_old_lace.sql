@@ -1,0 +1,1 @@
+ALTER TABLE `forms` ADD `auto_redirect_to_portal` integer DEFAULT true NOT NULL;

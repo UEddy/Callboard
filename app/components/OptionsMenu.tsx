@@ -15,7 +15,7 @@ export function OptionsMenu({
   rowCount,
   scopeNote,
 }: {
-  source: "submissions" | "abstracts" | "sessions" | "agenda";
+  source: "submissions" | "abstracts" | "sessions" | "agenda" | "evaluations";
   rowCount: number;
   scopeNote: string;
 }) {

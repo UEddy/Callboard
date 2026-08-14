@@ -2,14 +2,25 @@ import type { LoaderFunctionArgs } from "react-router";
 import { and, eq, inArray } from "drizzle-orm";
 import { getDb, DEMO_EVENT_ID } from "~/db/client";
 import {
+  assignments,
+  evaluationPlans,
   events,
   participants,
   rooms,
+  scores,
   submissionParticipants,
   submissions,
   tracks,
 } from "~/db/schema";
 import { loadSubmissionList, statusLabel, type Kind } from "~/lib/submission-list";
+import {
+  byScoreDesc,
+  comparatorFor,
+  computeEvaluationResults,
+  criteriaColumns,
+  isScored,
+  readSort,
+} from "~/lib/evaluation";
 import { buildCsv, buildXlsx, type Cell } from "~/lib/xlsx";
 import {
   detectConflicts,
@@ -221,6 +232,200 @@ async function agendaRows(
   return { rows, label };
 }
 
+/* --- evaluations ------------------------------------------------------ *
+ *
+ * One row per review, not per submission: reviewer names, their
+ * per-criterion scores and their comments only exist at that grain, and
+ * a committee arguing about a decision needs to see who said what. The
+ * submission's own weighted score and progress repeat on each of its
+ * rows so the sheet can be sorted or pivoted without losing them.
+ *
+ * The order is the order the screen is in, sort parameters included, so
+ * an export taken from a ranking reads like that ranking.
+ * ------------------------------------------------------------------ */
+
+async function evaluationRows(
+  db: ReturnType<typeof getDb>,
+  request: Request,
+): Promise<{ rows: Cell[][]; label: string }> {
+  const plans = await db
+    .select()
+    .from(evaluationPlans)
+    .where(eq(evaluationPlans.eventId, DEMO_EVENT_ID));
+
+  const allAssignments = plans.length
+    ? await db
+        .select()
+        .from(assignments)
+        .where(
+          inArray(
+            assignments.planId,
+            plans.map((p) => p.id),
+          ),
+        )
+    : [];
+
+  const allScores = allAssignments.length
+    ? await db
+        .select()
+        .from(scores)
+        .where(
+          inArray(
+            scores.assignmentId,
+            allAssignments.map((a) => a.id),
+          ),
+        )
+    : [];
+
+  const subIds = [...new Set(allAssignments.map((a) => a.submissionId))];
+  const subRows = subIds.length
+    ? await db
+        .select({
+          id: submissions.id,
+          ref: submissions.ref,
+          title: submissions.title,
+          status: submissions.status,
+          trackName: tracks.name,
+        })
+        .from(submissions)
+        .leftJoin(tracks, eq(submissions.trackId, tracks.id))
+        .where(inArray(submissions.id, subIds))
+    : [];
+  const subById = new Map(subRows.map((s) => [s.id, s]));
+
+  const reviewerIds = [...new Set(allAssignments.map((a) => a.participantId))];
+  const reviewerRows = reviewerIds.length
+    ? await db
+        .select({
+          id: participants.id,
+          firstName: participants.firstName,
+          lastName: participants.lastName,
+          email: participants.email,
+        })
+        .from(participants)
+        .where(inArray(participants.id, reviewerIds))
+    : [];
+  const reviewerName = new Map(
+    reviewerRows.map((r) => [
+      r.id,
+      [r.firstName, r.lastName].filter(Boolean).join(" ") || r.email,
+    ]),
+  );
+
+  const { totals, reviews } = computeEvaluationResults({
+    assignments: allAssignments,
+    scores: allScores,
+    plans,
+  });
+  const columns = criteriaColumns(plans);
+
+  /* Ranked exactly as the screen ranks: rank from the score order, then
+     whatever the visitor sorted by. */
+  const scored = subRows.map((s) => ({
+    ...s,
+    average: totals.get(s.id)?.average ?? null,
+    reviews: totals.get(s.id)?.reviews ?? 0,
+    assigned: totals.get(s.id)?.assigned ?? 0,
+    complete: totals.get(s.id)?.complete ?? 0,
+  }));
+
+  const rankById = new Map<string, number>();
+  let position = 0;
+  for (const r of [...scored].sort(byScoreDesc)) {
+    if (r.average !== null) rankById.set(r.id, ++position);
+  }
+
+  const { sort, dir } = readSort(request);
+  const ordered = [...scored].sort(comparatorFor(sort, dir));
+
+  const header: Cell[] = [
+    "Rank",
+    "Ref",
+    "Title",
+    "Track",
+    "Submission status",
+    "Weighted score",
+    "Reviews complete",
+    "Reviews assigned",
+    "Plan",
+    "Reviewer",
+    "Review status",
+    "Round",
+    "Reviewer score",
+    ...columns.map((c) => `${c.name} (w${c.weight})`),
+    "Comments",
+  ];
+
+  const rows: Cell[][] = [header];
+
+  for (const sub of ordered) {
+    const mine = reviews
+      .filter((r) => r.submissionId === sub.id)
+      .sort(
+        (a, b) =>
+          a.round - b.round ||
+          (reviewerName.get(a.participantId) ?? "").localeCompare(
+            reviewerName.get(b.participantId) ?? "",
+          ),
+      );
+
+    const front: Cell[] = [
+      rankById.get(sub.id) ?? "",
+      sub.ref,
+      sub.title,
+      sub.trackName ?? "",
+      statusLabel(sub.status),
+      // Numbers stay numbers: a spreadsheet should be able to sort and
+      // average this column without anybody retyping it.
+      sub.average === null ? "" : Number(sub.average.toFixed(2)),
+      sub.complete,
+      sub.assigned,
+    ];
+
+    if (mine.length === 0) {
+      rows.push([
+        ...front,
+        "",
+        "",
+        "Not assigned",
+        "",
+        "",
+        ...columns.map(() => ""),
+        "",
+      ]);
+      continue;
+    }
+
+    for (const r of mine) {
+      rows.push([
+        ...front,
+        r.planName,
+        reviewerName.get(r.participantId) ?? "",
+        r.status,
+        r.round,
+        r.average === null ? "" : Number(r.average.toFixed(2)),
+        /* A dropdown's number is its score, so the number is what a
+           spreadsheet gets. A free text criterion has no number: its
+           answer is the text, and it goes in its own column rather than
+           being lost among the comments. */
+        ...columns.map((c) => {
+          if (!isScored(c)) return r.comments[c.key] ?? "";
+          return c.key in r.values ? r.values[c.key] : "";
+        }),
+        /* Comments are per criterion, so they are labelled rather than
+           run together into one anonymous paragraph. */
+        columns
+          .filter((c) => isScored(c) && r.comments[c.key])
+          .map((c) => `${c.name}: ${r.comments[c.key]}`)
+          .join(" | "),
+      ]);
+    }
+  }
+
+  const suffix = sort === "score" && dir === "desc" ? "" : `-by-${sort}-${dir}`;
+  return { rows, label: `evaluations${suffix}` };
+}
+
 /* --- submissions family ---------------------------------------------- */
 
 async function listRows(
@@ -267,11 +472,13 @@ export async function loader({ context, request }: LoaderFunctionArgs) {
   const { rows, label } =
     source === "agenda"
       ? await agendaRows(db, url)
-      : await listRows(
-          db,
-          request,
-          source === "abstracts" || source === "sessions" ? source : null,
-        );
+      : source === "evaluations"
+        ? await evaluationRows(db, request)
+        : await listRows(
+            db,
+            request,
+            source === "abstracts" || source === "sessions" ? source : null,
+          );
 
   const filename = `callboard-${label}-${stamp()}.${format}`;
 

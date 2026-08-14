@@ -1,6 +1,6 @@
 import { Link, useLoaderData } from "react-router";
 import type { LoaderFunctionArgs } from "react-router";
-import { eq, inArray } from "drizzle-orm";
+import { asc, eq, inArray } from "drizzle-orm";
 import { getDb, DEMO_EVENT_ID } from "~/db/client";
 import {
   assignments,
@@ -9,10 +9,17 @@ import {
   rooms,
   submissionParticipants,
   submissions,
+  scores,
   tags,
   tracks,
 } from "~/db/schema";
 import type { RoutingEffect } from "~/lib/routing";
+import {
+  computeEvaluationResults,
+  criterionType,
+  isScored,
+  type Criterion,
+} from "~/lib/evaluation";
 
 export async function loader({ context, params }: LoaderFunctionArgs) {
   const started = Date.now();
@@ -71,20 +78,119 @@ export async function loader({ context, params }: LoaderFunctionArgs) {
         .where(inArray(tags.id, row.tagIds))
     : [];
 
-  const reviews = await db
+  const assignmentRows = await db
     .select({
       id: assignments.id,
+      planId: assignments.planId,
+      participantId: assignments.participantId,
+      submissionId: assignments.submissionId,
+      round: assignments.round,
       status: assignments.status,
       planName: evaluationPlans.name,
+      criteria: evaluationPlans.criteria,
+      scaleMin: evaluationPlans.scaleMin,
+      scaleMax: evaluationPlans.scaleMax,
+      anonymize: evaluationPlans.anonymize,
       firstName: participants.firstName,
       lastName: participants.lastName,
+      email: participants.email,
     })
     .from(assignments)
     .innerJoin(evaluationPlans, eq(assignments.planId, evaluationPlans.id))
     .innerJoin(participants, eq(assignments.participantId, participants.id))
-    .where(eq(assignments.submissionId, row.id));
+    .where(eq(assignments.submissionId, row.id))
+    .orderBy(asc(assignments.round), asc(assignments.id));
 
-  return { row, speakers, tagList, reviews, ms: Date.now() - started };
+  const scoreRows = assignmentRows.length
+    ? await db
+        .select({
+          assignmentId: scores.assignmentId,
+          criterionKey: scores.criterionKey,
+          value: scores.value,
+          comment: scores.comment,
+        })
+        .from(scores)
+        .where(
+          inArray(
+            scores.assignmentId,
+            assignmentRows.map((a) => a.id),
+          ),
+        )
+    : [];
+
+  /* Same maths as the results table and the export, from the same
+     module, so a score read here is the score this submission is ranked
+     by. */
+  const { totals, reviews: computed } = computeEvaluationResults({
+    assignments: assignmentRows,
+    scores: scoreRows,
+    plans: assignmentRows.map((a) => ({
+      id: a.planId,
+      name: a.planName,
+      criteria: a.criteria,
+    })),
+  });
+
+  const byAssignment = new Map(computed.map((r) => [r.assignmentId, r]));
+
+  const reviews = assignmentRows.map((a, i) => {
+    const detail = byAssignment.get(a.id);
+    const criteria = (a.criteria ?? []) as Criterion[];
+
+    /* A blind plan means the committee's identities stay out of this,
+       and out of the payload: withholding a name in the markup while
+       shipping it in the page's own JSON would be a blindfold with a
+       hole in it. The number keeps two reviewers on one submission
+       distinguishable without saying who they are. */
+    return {
+      id: a.id,
+      anonymous: a.anonymize,
+      who: a.anonymize
+        ? `Reviewer ${i + 1}`
+        : [a.firstName, a.lastName].filter(Boolean).join(" ") || a.email,
+      planName: a.planName,
+      round: a.round,
+      status: a.status,
+      scaleMax: a.scaleMax,
+      average: detail?.average ?? null,
+      criteria: criteria.map((c) => {
+        const value = detail?.values[c.key] ?? null;
+        const kind = criterionType(c);
+        return {
+          key: c.key,
+          name: c.name,
+          weight: c.weight,
+          type: kind,
+          scored: isScored(c),
+          value,
+          /* A dropdown's number means nothing without the author's word
+             for it, so the label is what gets shown. */
+          label:
+            kind === "dropdown" && value !== null
+              ? ((c.options ?? []).find((o) => o.value === value)?.label ??
+                String(value))
+              : null,
+          comment: detail?.comments[c.key] ?? null,
+        };
+      }),
+    };
+  });
+
+  const totalsForRow = totals.get(row.id) ?? null;
+
+  return {
+    row,
+    speakers,
+    tagList,
+    reviews,
+    score: {
+      average: totalsForRow?.average ?? null,
+      reviews: totalsForRow?.reviews ?? 0,
+      assigned: totalsForRow?.assigned ?? 0,
+      complete: totalsForRow?.complete ?? 0,
+    },
+    ms: Date.now() - started,
+  };
 }
 
 const STATUS_STYLE: Record<string, string> = {
@@ -108,7 +214,8 @@ function fmt(d: string | number | Date | null) {
 }
 
 export default function SubmissionDetail() {
-  const { row, speakers, tagList, reviews, ms } = useLoaderData<typeof loader>();
+  const { row, speakers, tagList, reviews, score, ms } =
+    useLoaderData<typeof loader>();
   const trail = (row.routingTrail ?? []) as RoutingEffect[];
 
   const answers = Object.entries(
@@ -320,32 +427,111 @@ export default function SubmissionDetail() {
           </section>
 
           <section className="rounded-lg border border-line bg-surface p-4">
-            <h2 className="text-[13px] font-semibold">
-              Review{" "}
-              <span className="font-normal text-faint">
-                {reviews.length}
-              </span>
-            </h2>
+            <div className="flex items-baseline justify-between gap-2">
+              <h2 className="text-[13px] font-semibold">
+                Review{" "}
+                <span className="font-normal text-faint">{reviews.length}</span>
+              </h2>
+              {score.average !== null && (
+                <span
+                  className="text-[13px] font-semibold tabular-nums text-strong"
+                  title={`Mean of ${score.reviews} reviewer${score.reviews === 1 ? "" : "s"}, each weighted by their plan's criteria`}
+                >
+                  {score.average.toFixed(2)}
+                  <span className="font-normal text-dim"> weighted</span>
+                </span>
+              )}
+            </div>
+
             {reviews.length === 0 ? (
               <p className="mt-2 text-[13px] text-dim">
                 Not assigned for review.
               </p>
             ) : (
-              <ul className="mt-2 space-y-1.5 text-[13px]">
-                {reviews.map((r) => (
-                  <li key={r.id} className="flex items-baseline justify-between gap-2">
-                    <span className="text-strong">
-                      {[r.firstName, r.lastName].filter(Boolean).join(" ")}
-                    </span>
-                    <span className="text-[12px] text-dim">
-                      {r.status}
-                    </span>
-                  </li>
-                ))}
-                <li className="pt-1 text-[12px] text-dim">
+              <>
+                <p className="mt-0.5 text-[12px] text-dim">
+                  {score.complete} of {score.assigned} complete ·{" "}
                   {[...new Set(reviews.map((r) => r.planName))].join(", ")}
-                </li>
-              </ul>
+                </p>
+
+                <ul className="mt-3 space-y-3">
+                  {reviews.map((r) => (
+                    <li
+                      key={r.id}
+                      className="rounded-md border border-line-soft bg-subtle p-2.5"
+                    >
+                      <div className="flex items-baseline justify-between gap-2">
+                        <span className="text-[13px] font-medium text-strong">
+                          {r.who}
+                          {r.anonymous && (
+                            <span
+                              className="ml-1.5 cb-pill cb-pill-neutral"
+                              title="This plan is scored blind, so who reviewed it is not shown"
+                            >
+                              blind
+                            </span>
+                          )}
+                        </span>
+                        <span className="shrink-0 text-[12px] tabular-nums text-dim">
+                          {r.average === null ? r.status : r.average.toFixed(2)}
+                        </span>
+                      </div>
+
+                      {r.average === null ? (
+                        <p className="mt-1 text-[12px] text-dim">
+                          {r.status === "skipped"
+                            ? "Skipped this one."
+                            : "Not scored yet."}
+                        </p>
+                      ) : (
+                        <dl className="mt-1.5 space-y-1">
+                          {r.criteria.map((c) => (
+                            <div key={c.key}>
+                              <div className="flex items-baseline justify-between gap-2 text-[12px]">
+                                <dt className="text-dim">
+                                  {c.name}
+                                  <span className="text-faint">
+                                    {c.scored ? ` ·${c.weight}` : " · not scored"}
+                                  </span>
+                                </dt>
+                                <dd className="shrink-0 text-strong">
+                                  {!c.scored ? null : c.value === null ? (
+                                    <span className="text-faint">not scored</span>
+                                  ) : c.label ? (
+                                    <>
+                                      {c.label}
+                                      <span className="text-faint tabular-nums">
+                                        {" "}
+                                        ({c.value})
+                                      </span>
+                                    </>
+                                  ) : (
+                                    <span className="tabular-nums">
+                                      {c.value}
+                                      <span className="text-faint">
+                                        /{r.scaleMax}
+                                      </span>
+                                    </span>
+                                  )}
+                                </dd>
+                              </div>
+                              {/* The comment is the part a producer
+                                  actually needs when a decision is
+                                  argued about, so it is shown in full
+                                  rather than behind a hover. */}
+                              {c.comment && (
+                                <p className="mt-0.5 whitespace-pre-wrap border-l-2 border-line pl-2 text-[12px] leading-relaxed text-body">
+                                  {c.comment}
+                                </p>
+                              )}
+                            </div>
+                          ))}
+                        </dl>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </>
             )}
           </section>
         </div>

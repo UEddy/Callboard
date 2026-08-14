@@ -268,6 +268,7 @@ export async function action({ context, request }: ActionFunctionArgs) {
           templateKey: accepted ? "acceptance" : "decline",
           toEmail: sp.email,
           subject,
+          bodyHtml: html,
           status: result.ok ? (result.simulated ? "queued" : "sent") : "failed",
           error: result.error ?? null,
           icsUid: ics ? uid : null,

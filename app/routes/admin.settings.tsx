@@ -8,9 +8,11 @@ import {
   describeZone,
   dayIsoIn,
   fmtDateIn,
+  fromZonedInput,
   isValidZone,
   partsIn,
   safeZone,
+  toZonedInput,
   wallToUtc,
   zoneAbbr,
 } from "~/lib/tz";
@@ -39,21 +41,12 @@ const EVENT_TYPES = [
   "Online only",
 ];
 
-/* datetime-local wants a wall clock reading, not an instant. */
-function toLocalInput(ms: number | null, zone: string) {
-  if (ms === null) return "";
-  const p = partsIn(ms, zone);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${p.year}-${pad(p.month)}-${pad(p.day)}T${pad(p.hour)}:${pad(p.minute)}`;
-}
-
-function fromLocalInput(value: string, zone: string): Date | null {
-  const m = value.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/);
-  if (!m) return null;
-  return new Date(
-    wallToUtc(+m[1], +m[2], +m[3], +m[4], +m[5], zone),
-  );
-}
+/* datetime-local wants a wall clock reading, not an instant. Both
+   directions live in ~/lib/tz now, shared with the form builder's close
+   date, because two screens editing an instant in two different zones is
+   how a deadline ends up nine hours out. */
+const toLocalInput = toZonedInput;
+const fromLocalInput = fromZonedInput;
 
 export async function loader({ context, request }: LoaderFunctionArgs) {
   const started = Date.now();

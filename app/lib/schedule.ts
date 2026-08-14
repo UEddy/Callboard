@@ -13,15 +13,71 @@ export const DAY_START_HOUR = 8;
 export const DAY_END_HOUR = 18;
 export const SLOT_MINUTES = 30;
 
-export const DURATION_BY_FORMAT: Record<string, number> = {
-  Keynote: 45,
-  "Talk (25 min)": 25,
-  "Workshop (90 min)": 90,
-  "Lightning Talk (10 min)": 10,
-};
+export const DEFAULT_DURATION_MINUTES = 30;
+
+/* Formats are free text an organiser types, so the length has to be read
+   out of the string rather than looked up in a table. A table only knows
+   the seed's four spellings, and every format anybody else invents would
+   silently become 30 minutes and be laid out wrong on the grid.
+   Handles "Talk (30 min)", "Workshop (120 min)", "Keynote - 1 hour",
+   "Panel (1.5 hours)", "Lightning (10m)". */
+const DURATION_PATTERN =
+  /(\d+(?:\.\d+)?)\s*(hours|hour|hrs|hr|h|minutes|minute|mins|min|m)\b/i;
+
+/* Names with a conventional length and no number in them. Only a
+   fallback: a "Keynote (60 min)" is sixty minutes, not forty-five. */
+const DURATION_BY_NAME: { match: RegExp; minutes: number }[] = [
+  { match: /keynote/i, minutes: 45 },
+  { match: /lightning/i, minutes: 10 },
+  { match: /workshop/i, minutes: 90 },
+  { match: /panel/i, minutes: 45 },
+];
+
+export type DurationSource = "parsed" | "name" | "default";
+
+/* The length and where it came from, so the UI can show a producer what
+   was assumed rather than laying out a session on a number nobody
+   chose. */
+export function durationDetail(format: string | null): {
+  minutes: number;
+  source: DurationSource;
+} {
+  const raw = (format ?? "").trim();
+  if (raw) {
+    const m = raw.match(DURATION_PATTERN);
+    if (m) {
+      const value = Number(m[1]);
+      const unit = m[2].toLowerCase();
+      const isHours = unit.startsWith("h");
+      const minutes = Math.round(isHours ? value * 60 : value);
+      // A zero or a silly number is worse than the default: it would
+      // render as a session with no height, or one covering the week.
+      if (minutes > 0 && minutes <= 24 * 60) {
+        return { minutes, source: "parsed" };
+      }
+    }
+    for (const known of DURATION_BY_NAME) {
+      if (known.match.test(raw)) {
+        return { minutes: known.minutes, source: "name" };
+      }
+    }
+  }
+  return { minutes: DEFAULT_DURATION_MINUTES, source: "default" };
+}
 
 export function durationFor(format: string | null) {
-  return (format && DURATION_BY_FORMAT[format]) || 30;
+  return durationDetail(format).minutes;
+}
+
+/* "90 min" when the format said so, "45 min, assumed" when Callboard
+   picked it. The qualifier is the point: a producer seeing a session
+   sized wrong needs to know the length was a guess from the format
+   string, not something they set. */
+export function durationLabel(format: string | null) {
+  const d = durationDetail(format);
+  return d.source === "parsed"
+    ? `${d.minutes} min`
+    : `${d.minutes} min, assumed`;
 }
 
 export function slotToUtcMs(
@@ -57,6 +113,9 @@ export type Scheduled = {
   trackName: string | null;
   trackColor: string | null;
   format: string | null;
+  /* Placed but not published. The builder sets it; the screens that only
+     count conflicts have no use for it. */
+  isDraft?: boolean;
   speakers: { id: string; name: string }[];
 };
 
@@ -129,23 +188,62 @@ export function detectConflicts(
   return out;
 }
 
-/* The days the event spans, as local ISO dates. */
+/* Which calendar day an event boundary names.
+ *
+ * These two columns carry two different kinds of value. Set through
+ * Settings they are a real instant in the event's zone, and the day is
+ * the day in that zone. Seeded, imported, or written by anything with a
+ * date-only picker they are midnight UTC, which is a calendar date
+ * wearing an instant's clothes: read as an instant west of Greenwich it
+ * lands on the evening before, and the whole grid slides a day.
+ *
+ * Exactly midnight UTC is therefore read as the date it spells out.
+ * The one case it gets wrong is an event genuinely starting at midnight
+ * UTC to the second, which is 5pm the previous day in California and not
+ * a time any conference starts. */
+function boundaryDayIso(value: Date | number, timeZone: string): string {
+  const ms = new Date(value).getTime();
+  const d = new Date(ms);
+  const isDateOnly =
+    d.getUTCHours() === 0 &&
+    d.getUTCMinutes() === 0 &&
+    d.getUTCSeconds() === 0 &&
+    d.getUTCMilliseconds() === 0;
+  if (!isDateOnly) return dayIsoIn(ms, timeZone);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
+}
+
+/* The days the event spans, as ISO dates in the event's own zone.
+ *
+ * `alsoInclude` takes the days things are actually scheduled on, so the
+ * builder cannot end up with a session on a day it offers no tab for,
+ * and so it lands on the same days as the public agenda, which derives
+ * its list from the sessions. Two screens disagreeing about which day is
+ * Day 1 is the same class of bug as two screens disagreeing about the
+ * conflict count. */
 export function eventDays(
   startsAt: Date | number | null,
   endsAt: Date | number | null,
   timeZone: string,
+  alsoInclude: string[] = [],
 ): string[] {
-  if (!startsAt || !endsAt) return [];
-  const out: string[] = [];
-  const endDay = dayIsoIn(new Date(endsAt).getTime(), timeZone);
-  let cursor = new Date(startsAt).getTime();
-  // Step a day at a time in the zone, so a DST day of 23 or 25 hours
-  // still produces exactly one calendar entry.
-  for (let guard = 0; guard < 400; guard++) {
-    const day = dayIsoIn(cursor, timeZone);
-    out.push(day);
-    if (day >= endDay) break;
-    cursor = dayIsoToUtc(day, 12, 0, timeZone) + 24 * 3_600_000;
+  const out = new Set<string>(alsoInclude);
+
+  if (startsAt && endsAt) {
+    const endDay = boundaryDayIso(endsAt, timeZone);
+    let day = boundaryDayIso(startsAt, timeZone);
+    // Step a day at a time in the zone, so a DST day of 23 or 25 hours
+    // still produces exactly one calendar entry.
+    for (let guard = 0; guard < 400; guard++) {
+      out.add(day);
+      if (day >= endDay) break;
+      day = dayIsoIn(
+        dayIsoToUtc(day, 12, 0, timeZone) + 24 * 3_600_000,
+        timeZone,
+      );
+    }
   }
-  return out;
+
+  return [...out].sort();
 }

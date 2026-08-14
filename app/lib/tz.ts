@@ -115,6 +115,31 @@ export function dayIsoToUtc(
   return wallToUtc(y, m, d, hour, minute, timeZone);
 }
 
+/* --- datetime-local, in the event's zone ---------------------------- *
+ *
+ * A datetime-local input has no timezone: it is a wall clock reading,
+ * and whoever reads it decides which clock. Left to the browser's own
+ * getters it means the producer's clock, so a deadline typed by someone
+ * in Berlin for a conference in California lands nine hours out and
+ * nobody notices until the form closes early. Every screen that edits an
+ * instant goes through these two, against the event's zone, and says so
+ * next to the field.
+ */
+export function toZonedInput(ms: number | null, timeZone: string) {
+  if (ms === null) return "";
+  const p = partsIn(ms, safeZone(timeZone));
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${p.year}-${pad(p.month)}-${pad(p.day)}T${pad(p.hour)}:${pad(p.minute)}`;
+}
+
+export function fromZonedInput(value: string, timeZone: string): Date | null {
+  const m = value.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
+  if (!m) return null;
+  return new Date(
+    wallToUtc(+m[1], +m[2], +m[3], +m[4], +m[5], safeZone(timeZone)),
+  );
+}
+
 /* Local calendar date in the zone, as YYYY-MM-DD. */
 export function dayIsoIn(utcMs: number, timeZone: string) {
   const p = partsIn(utcMs, timeZone);

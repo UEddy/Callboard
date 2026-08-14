@@ -1,4 +1,10 @@
-import { data, Link, useLoaderData, useSearchParams } from "react-router";
+import {
+  data,
+  Link,
+  useLoaderData,
+  useLocation,
+  useSearchParams,
+} from "react-router";
 import type {
   LoaderFunctionArgs,
   HeadersFunction,
@@ -7,16 +13,18 @@ import type {
 import { getDb } from "~/db/client";
 import {
   DEFAULT_FIELDS,
+  isSearchable,
   isView,
   loadPublicEvent,
   parseFields,
+  publicLinks,
   VIEWS,
   VIEW_LABEL,
   VIEW_SLUG,
   viewFromSlug,
   type View,
 } from "~/lib/public-event";
-import { renderView } from "~/components/PublicViews";
+import { PublicSearch, renderView } from "~/components/PublicViews";
 import { embeds } from "~/db/schema";
 import { eq } from "drizzle-orm";
 import { readViewerZone } from "~/lib/viewer-tz";
@@ -114,7 +122,11 @@ export async function loader({ context, params, request }: LoaderFunctionArgs) {
     url.searchParams.get("day") ??
     (typeof saved?.filters.day === "string" ? saved.filters.day : null);
 
-  const loaded = await loadPublicEvent(db, params.eventSlug!, { track, day });
+  /* Search is the visitor's, never an embed's saved configuration: an
+     organiser publishes a programme, not a search result. */
+  const q = url.searchParams.get("q");
+
+  const loaded = await loadPublicEvent(db, params.eventSlug!, { track, day, q });
   if (!loaded) throw new Response("Event not found", { status: 404 });
 
   // Field toggles: saved config first, then per-parameter overrides.
@@ -160,6 +172,7 @@ export function meta({ loaderData }: MetaArgs<typeof loader>) {
 export default function PublicEvent() {
   const data = useLoaderData<typeof loader>();
   const [params, setParams] = useSearchParams();
+  const { pathname } = useLocation();
 
   if (data.retired) {
     return (
@@ -172,7 +185,8 @@ export default function PublicEvent() {
     );
   }
 
-  const { event, sessions, speakers, rooms, days, fields, view, embed } = data;
+  const { event, sessions, speakers, rooms, days, fields, view, embed, query } =
+    data;
 
   const body = renderView(view, {
     sessions,
@@ -180,6 +194,11 @@ export default function PublicEvent() {
     rooms,
     days,
     fields,
+    query,
+    /* Every entry on every view opens. The current filters and search
+       travel with the link, so Back on the detail page returns to the
+       list as the visitor left it. */
+    links: publicLinks(event.slug, params, view),
     eventZone: data.eventZone,
     viewerZone: data.viewerZone,
   });
@@ -196,6 +215,22 @@ export default function PublicEvent() {
     else next.set(key, value);
     setParams(next, { preventScrollReset: true });
   };
+
+  const searchable = isSearchable(view);
+  const countsSpeakers = view === "speaker_list" || view === "speaker_gallery";
+
+  /* A GET form replaces the whole query string, so everything the URL is
+     already carrying has to travel with it as a hidden field. `q` is
+     excluded because the input is the field for it. */
+  const carried = Object.fromEntries(
+    [...params.entries()].filter(([key]) => key !== "q"),
+  );
+  const clearHref = (() => {
+    const next = new URLSearchParams(params);
+    next.delete("q");
+    const qs = next.toString();
+    return qs ? `${pathname}?${qs}` : pathname;
+  })();
 
   return (
     <div className="min-h-screen bg-canvas text-strong">
@@ -236,8 +271,8 @@ export default function PublicEvent() {
       </header>
 
       <div className="mx-auto max-w-5xl px-4 py-5">
-        {(data.tracks.length > 0 || days.length > 1) && (
-          <div className="mb-4 flex flex-wrap items-center gap-2">
+        {(data.tracks.length > 0 || days.length > 1 || searchable) && (
+          <div className="mb-4 flex flex-wrap items-center gap-x-2 gap-y-3">
             {days.length > 1 && (
               <select
                 value={data.day ?? ""}
@@ -273,11 +308,24 @@ export default function PublicEvent() {
                 ))}
               </select>
             )}
-            <span className="text-[12px] text-dim tabular-nums">
-              {view.startsWith("speaker")
-                ? `${speakers.length} speaker${speakers.length === 1 ? "" : "s"}`
-                : `${sessions.length} session${sessions.length === 1 ? "" : "s"}`}
-            </span>
+            {searchable ? (
+              /* The one control, for all three list views. It carries the
+                 count itself, because the count is the answer to the
+                 search. */
+              <PublicSearch
+                query={query}
+                count={countsSpeakers ? speakers.length : sessions.length}
+                noun={countsSpeakers ? "speaker" : "session"}
+                hidden={carried}
+                clearHref={clearHref}
+              />
+            ) : (
+              <span className="text-[12px] text-dim tabular-nums">
+                {countsSpeakers
+                  ? `${speakers.length} speaker${speakers.length === 1 ? "" : "s"}`
+                  : `${sessions.length} session${sessions.length === 1 ? "" : "s"}`}
+              </span>
+            )}
           </div>
         )}
 

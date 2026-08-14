@@ -1,6 +1,14 @@
-import { Form, useLoaderData, useNavigation, useSearchParams } from "react-router";
+import { useState } from "react";
+import {
+  Form,
+  Link,
+  useActionData,
+  useLoaderData,
+  useNavigation,
+  useSearchParams,
+} from "react-router";
 import type { LoaderFunctionArgs, ActionFunctionArgs } from "react-router";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import { getDb, DEMO_EVENT_ID } from "~/db/client";
 import {
   submissions,
@@ -12,8 +20,26 @@ import {
   scores,
   evaluatorConflicts,
 } from "~/db/schema";
-
-type Criterion = { key: string; name: string; weight: number; description?: string };
+import {
+  CONFLICT_REASONS,
+  CRITERION_TYPES,
+  RESULT_SORTS,
+  byScoreDesc,
+  comparatorFor,
+  computeEvaluationResults,
+  conflictReasonLabel,
+  criterionType,
+  describeWeighting,
+  formatOptions,
+  isConflictReason,
+  isScored,
+  parseCriteria,
+  readSort,
+  type Criterion,
+  type ResultSort,
+  type SortDir,
+} from "~/lib/evaluation";
+import { OptionsMenu } from "~/components/OptionsMenu";
 
 export async function loader({ context, request }: LoaderFunctionArgs) {
   const started = Date.now();
@@ -78,63 +104,67 @@ export async function loader({ context, request }: LoaderFunctionArgs) {
     : [];
   const subById = new Map(subRows.map((s) => [s.id, s]));
 
+  /* Scoped to the event rather than to submissions that currently have
+     an assignment: declaring a conflict takes the assignment away, and a
+     conflict that disappeared from this list the moment it did its job
+     would be worse than not recording it. */
   const conflicts = await db
-    .select()
+    .select({
+      participantId: evaluatorConflicts.participantId,
+      submissionId: evaluatorConflicts.submissionId,
+      reason: evaluatorConflicts.reason,
+      autoDetected: evaluatorConflicts.autoDetected,
+      ref: submissions.ref,
+      title: submissions.title,
+      firstName: participants.firstName,
+      lastName: participants.lastName,
+      email: participants.email,
+    })
     .from(evaluatorConflicts)
-    .where(
-      inArray(
-        evaluatorConflicts.submissionId,
-        subIds.length ? subIds : ["none"],
-      ),
-    );
+    .innerJoin(
+      submissions,
+      eq(evaluatorConflicts.submissionId, submissions.id),
+    )
+    .innerJoin(
+      participants,
+      eq(evaluatorConflicts.participantId, participants.id),
+    )
+    .where(eq(submissions.eventId, DEMO_EVENT_ID))
+    .orderBy(asc(submissions.refSeq));
 
-  // Weighted average per submission, normalised to the plan's scale.
+  /* Weighted average per submission, normalised to the plan's scale.
+     The maths lives in ~/lib/evaluation so the export prints the same
+     numbers this table ranks by. */
   const planById = new Map(plans.map((p) => [p.id, p]));
-  const perSubmission = new Map<
-    string,
-    { total: number; count: number; complete: number; assigned: number }
-  >();
+  const { totals: perSubmission } = computeEvaluationResults({
+    assignments: allAssignments,
+    scores: allScores,
+    plans,
+  });
 
-  for (const a of allAssignments) {
-    const entry = perSubmission.get(a.submissionId) ?? {
-      total: 0,
-      count: 0,
-      complete: 0,
-      assigned: 0,
-    };
-    entry.assigned += 1;
-    if (a.status === "complete") entry.complete += 1;
-
-    const plan = planById.get(a.planId);
-    const criteria = (plan?.criteria ?? []) as Criterion[];
-    const mine = allScores.filter((s) => s.assignmentId === a.id);
-    if (mine.length && criteria.length) {
-      let weighted = 0;
-      let weightSum = 0;
-      for (const c of criteria) {
-        const s = mine.find((x) => x.criterionKey === c.key);
-        if (!s) continue;
-        weighted += s.value * c.weight;
-        weightSum += c.weight;
-      }
-      if (weightSum > 0) {
-        entry.total += weighted / weightSum;
-        entry.count += 1;
-      }
-    }
-    perSubmission.set(a.submissionId, entry);
-  }
-
-  const ranked = [...perSubmission.entries()]
+  const scored = [...perSubmission.entries()]
     .map(([id, v]) => ({
       ...subById.get(id)!,
-      average: v.count ? v.total / v.count : null,
-      reviews: v.count,
+      average: v.average,
+      reviews: v.reviews,
       assigned: v.assigned,
       complete: v.complete,
     }))
-    .filter((r) => r.id)
-    .sort((a, b) => (b.average ?? -1) - (a.average ?? -1));
+    .filter((r) => r.id);
+
+  /* Rank is a property of the score, not of where a row happens to sit
+     on screen. Sorting the table by title must not renumber it, so it is
+     worked out once from the score order and carried on the row. */
+  const rankById = new Map<string, number>();
+  let position = 0;
+  for (const r of [...scored].sort(byScoreDesc)) {
+    if (r.average !== null) rankById.set(r.id, ++position);
+  }
+
+  const { sort, dir } = readSort(request);
+  const ranked = [...scored]
+    .map((r) => ({ ...r, rank: rankById.get(r.id) ?? null }))
+    .sort(comparatorFor(sort, dir));
 
   // The signed-in evaluator's own queue.
   const myQueue = allAssignments
@@ -171,6 +201,20 @@ export async function loader({ context, request }: LoaderFunctionArgs) {
     };
   });
 
+  /* Per plan: what an edit would touch, and what a delete would take
+     with it. Counted here so the editor can warn before the producer
+     commits rather than after. */
+  const scoredAssignmentIds = new Set(allScores.map((s) => s.assignmentId));
+  const planStats = plans.map((p) => {
+    const mine = allAssignments.filter((a) => a.planId === p.id);
+    return {
+      id: p.id,
+      assignments: mine.length,
+      scoredReviews: mine.filter((a) => scoredAssignmentIds.has(a.id)).length,
+      submissions: new Set(mine.map((a) => a.submissionId)).size,
+    };
+  });
+
   const totals = {
     evaluations: allAssignments.length,
     complete: allAssignments.filter((a) => a.status === "complete").length,
@@ -181,13 +225,46 @@ export async function loader({ context, request }: LoaderFunctionArgs) {
 
   return {
     plans,
+    planStats,
+    editPlanId: url.searchParams.get("plan"),
+    creatingPlan: url.searchParams.get("newplan") === "1",
     evaluators: evaluatorStats,
     asEvaluatorId,
     myQueue,
     ranked,
+    sort,
+    dir,
     totals,
     conflicts,
     ms: Date.now() - started,
+  };
+}
+
+/* What is riding on a plan: how many reviews exist against it and how
+   many of those carry a score. Used to warn before an edit and before a
+   delete, because the two have very different consequences and a
+   producer deserves to know which one they are about to do. */
+async function planImpact(db: ReturnType<typeof getDb>, planId: string) {
+  const rows = await db
+    .select({ id: assignments.id })
+    .from(assignments)
+    .where(eq(assignments.planId, planId));
+
+  if (rows.length === 0) return { assignments: 0, scoredReviews: 0 };
+
+  const scored = await db
+    .select({ assignmentId: scores.assignmentId })
+    .from(scores)
+    .where(
+      inArray(
+        scores.assignmentId,
+        rows.map((r) => r.id),
+      ),
+    );
+
+  return {
+    assignments: rows.length,
+    scoredReviews: new Set(scored.map((s) => s.assignmentId)).size,
   };
 }
 
@@ -202,9 +279,14 @@ export async function action({ context, request }: ActionFunctionArgs) {
 
     for (const key of keys) {
       const raw = fd.get(`value_${key}`);
-      if (raw === null) continue;
-      const value = Number(raw);
       const comment = String(fd.get(`comment_${key}`) ?? "") || null;
+
+      /* A free text criterion posts no value at all: its answer is the
+         comment. Recording a nought for it would drag every average it
+         touched towards the bottom of the scale. */
+      const value =
+        raw === null || String(raw).trim() === "" ? null : Number(raw);
+      if (value === null && comment === null) continue;
 
       const existing = await db
         .select({ id: scores.id })
@@ -237,6 +319,175 @@ export async function action({ context, request }: ActionFunctionArgs) {
   }
 
   /* --- Spread unreviewed submissions across evaluators -------------- */
+  /* --- Plan CRUD ---------------------------------------------------- */
+
+  if (intent === "plan_create" || intent === "plan_update") {
+    const name = String(fd.get("name") ?? "").trim();
+    if (!name) return { ok: false, error: "Give the plan a name." };
+
+    const scaleMin = Math.trunc(Number(fd.get("scaleMin") ?? 1));
+    const scaleMax = Math.trunc(Number(fd.get("scaleMax") ?? 5));
+    if (!Number.isFinite(scaleMin) || !Number.isFinite(scaleMax)) {
+      return { ok: false, error: "The scale has to be two whole numbers." };
+    }
+    if (scaleMax - scaleMin < 1) {
+      return {
+        ok: false,
+        error: `A scale of ${scaleMin} to ${scaleMax} gives a reviewer nothing to choose between. The top has to be above the bottom.`,
+      };
+    }
+    if (scaleMax - scaleMin > 20) {
+      return {
+        ok: false,
+        error: `${scaleMin} to ${scaleMax} is ${scaleMax - scaleMin + 1} radio buttons in a row. Keep a scale to 20 points or fewer.`,
+      };
+    }
+
+    /* The editor posts parallel arrays, one entry per row. */
+    const rows = (fd.getAll("c_name") as string[]).map((_, i) => ({
+      key: String(fd.getAll("c_key")[i] ?? ""),
+      name: String(fd.getAll("c_name")[i] ?? ""),
+      description: String(fd.getAll("c_description")[i] ?? ""),
+      weight: String(fd.getAll("c_weight")[i] ?? ""),
+      type: String(fd.getAll("c_type")[i] ?? "numeric"),
+      options: String(fd.getAll("c_options")[i] ?? ""),
+    }));
+
+    const parsed = parseCriteria(rows, scaleMin, scaleMax);
+    if (!parsed.ok) return { ok: false, error: parsed.error };
+
+    const values = {
+      name,
+      criteria: parsed.criteria,
+      scaleMin,
+      scaleMax,
+      anonymize: fd.get("anonymize") === "on",
+    };
+
+    if (intent === "plan_create") {
+      await db.insert(evaluationPlans).values({
+        eventId: DEMO_EVENT_ID,
+        rounds: 1,
+        ...values,
+      });
+      return { ok: true, planSaved: `Created "${name}".` };
+    }
+
+    const planId = String(fd.get("planId"));
+    const before = await db.query.evaluationPlans.findFirst({
+      where: eq(evaluationPlans.id, planId),
+    });
+    if (!before) return { ok: false, error: "That plan no longer exists." };
+
+    await db
+      .update(evaluationPlans)
+      .set(values)
+      .where(eq(evaluationPlans.id, planId));
+
+    /* Nothing in `scores` is touched by an edit, ever. Removing a
+       criterion leaves its rows where they are and they simply stop
+       being counted, because the average is computed over the plan's
+       current criteria. Say so, with the number, because "will this lose
+       my committee's work" is the only question worth answering here. */
+    const impact = await planImpact(db, planId);
+    const beforeCriteria = (before.criteria ?? []) as Criterion[];
+    const dropped = beforeCriteria.filter(
+      (b) => !parsed.criteria.some((c) => c.key === b.key),
+    );
+
+    const notes = [`Saved "${name}".`];
+    if (impact.scoredReviews > 0) {
+      notes.push(
+        `${impact.scoredReviews} recorded review${impact.scoredReviews === 1 ? "" : "s"} ${impact.scoredReviews === 1 ? "was" : "were"} kept and re-totalled against the new weights.`,
+      );
+    }
+    if (dropped.length) {
+      notes.push(
+        `${dropped.map((d) => `"${d.name}"`).join(", ")} ${dropped.length === 1 ? "was removed. Its scores are still on record but no longer count" : "were removed. Their scores are still on record but no longer count"} towards the total.`,
+      );
+    }
+
+    return { ok: true, planSaved: notes.join(" ") };
+  }
+
+  if (intent === "plan_delete") {
+    const planId = String(fd.get("planId"));
+    const plan = await db.query.evaluationPlans.findFirst({
+      where: eq(evaluationPlans.id, planId),
+    });
+    if (!plan) return { ok: false, error: "That plan no longer exists." };
+
+    const impact = await planImpact(db, planId);
+    /* Deleting the plan cascades to its assignments and through them to
+       the scores, so this one really does destroy work. The confirmation
+       in the UI names the numbers; this repeats them in the result. */
+    await db.delete(evaluationPlans).where(eq(evaluationPlans.id, planId));
+
+    return {
+      ok: true,
+      planSaved:
+        `Deleted "${plan.name}"` +
+        (impact.assignments
+          ? `, along with ${impact.assignments} assignment${impact.assignments === 1 ? "" : "s"} and ${impact.scoredReviews} recorded review${impact.scoredReviews === 1 ? "" : "s"}.`
+          : ". Nothing was assigned to it."),
+    };
+  }
+
+  /* An evaluator looking at a submission is the only one who can see
+     most conflicts: the company match is detectable, "I mentored them"
+     is not. Declaring writes the row auto-assignment already routes
+     around, and takes the submission out of their queue, because asking
+     somebody to keep scrolling past a thing they have just said they
+     cannot judge is how it ends up scored anyway. */
+  if (intent === "declare_conflict") {
+    const assignmentId = String(fd.get("assignmentId") ?? "");
+    const rawReason = String(fd.get("reason") ?? "");
+    const reason = isConflictReason(rawReason) ? rawReason : "other";
+
+    /* Whose conflict it is comes from the assignment, never from the
+       form: a participant id in a hidden field is a way to record a
+       conflict against somebody else. */
+    const assignment = await db.query.assignments.findFirst({
+      where: eq(assignments.id, assignmentId),
+    });
+    if (!assignment) return { ok: false, error: "That review is no longer assigned." };
+
+    const submission = await db.query.submissions.findFirst({
+      where: eq(submissions.id, assignment.submissionId),
+    });
+
+    await db
+      .insert(evaluatorConflicts)
+      .values({
+        participantId: assignment.participantId,
+        submissionId: assignment.submissionId,
+        reason,
+        autoDetected: false,
+      })
+      .onConflictDoNothing();
+
+    /* Every assignment they hold on that submission, not just this one:
+       the conflict is with the submission, so a second round or a second
+       plan would put it straight back in front of them. Scores they had
+       already left go with it, which is the point. */
+    const removed = await db
+      .delete(assignments)
+      .where(
+        and(
+          eq(assignments.participantId, assignment.participantId),
+          eq(assignments.submissionId, assignment.submissionId),
+        ),
+      )
+      .returning({ id: assignments.id });
+
+    return {
+      ok: true,
+      declared: `${submission?.ref ?? "That submission"} is off your queue and recorded as a conflict${
+        removed.length > 1 ? `, across ${removed.length} assignments` : ""
+      }. Auto-assign will not offer it to you again.`,
+    };
+  }
+
   if (intent === "auto_assign") {
     const planId = String(fd.get("planId"));
     const perSubmission = Number(fd.get("reviewers") ?? 2);
@@ -324,17 +575,86 @@ export async function action({ context, request }: ActionFunctionArgs) {
 
 /* ------------------------------------------------------------------ */
 
+/* A sortable column header. The arrow is on the active column only, and
+   it points the way the rows are going: down for highest first. The
+   inactive columns carry a faint arrow on hover so it is discoverable
+   that they sort at all, and `aria-sort` tells a screen reader the same
+   thing the arrow tells everybody else. */
+function SortHeader({
+  column,
+  label,
+  sort,
+  dir,
+  onSort,
+}: {
+  column: ResultSort;
+  label: string;
+  sort: ResultSort;
+  dir: SortDir;
+  onSort: (key: ResultSort) => void;
+}) {
+  const active = sort === column;
+  const opening = column === "title" ? "asc" : "desc";
+  const next = active ? (dir === "asc" ? "desc" : "asc") : opening;
+  const nextWords =
+    column === "title"
+      ? next === "asc"
+        ? "A to Z"
+        : "Z to A"
+      : next === "desc"
+        ? "highest first"
+        : "lowest first";
+
+  return (
+    <th
+      className="px-4 py-2 font-medium"
+      aria-sort={active ? (dir === "asc" ? "ascending" : "descending") : "none"}
+    >
+      <button
+        type="button"
+        onClick={() => onSort(column)}
+        title={`Sort by ${label.toLowerCase()}, ${nextWords}`}
+        className={[
+          "group inline-flex items-center gap-1 uppercase tracking-[0.06em] transition-colors",
+          active ? "text-strong" : "hover:text-strong",
+        ].join(" ")}
+      >
+        {label}
+        <span
+          aria-hidden
+          className={[
+            "text-[9px] leading-none",
+            active ? "opacity-100" : "opacity-0 group-hover:opacity-40",
+          ].join(" ")}
+        >
+          {active && dir === "asc" ? "▲" : "▼"}
+        </span>
+      </button>
+    </th>
+  );
+}
+
 export default function Evaluation() {
   const {
     plans,
+    planStats,
+    editPlanId,
+    creatingPlan,
     evaluators,
     asEvaluatorId,
     myQueue,
     ranked,
+    sort,
+    dir,
     totals,
     conflicts,
     ms,
   } = useLoaderData<typeof loader>();
+  const action = useActionData<{
+    declared?: string;
+    planSaved?: string;
+    error?: string;
+  }>();
   const [params, setParams] = useSearchParams();
   const nav = useNavigation();
   const busy = nav.state !== "idle";
@@ -343,6 +663,18 @@ export default function Evaluation() {
   const setTab = (t: string) => {
     const n = new URLSearchParams(params);
     n.set("tab", t);
+    setParams(n);
+  };
+
+  /* Clicking the column you are already sorted by turns it around. A
+     fresh column opens the way somebody means it: highest score first,
+     most reviews first, titles from A. */
+  const setSort = (key: ResultSort) => {
+    const opening: SortDir = key === "title" ? "asc" : "desc";
+    const n = new URLSearchParams(params);
+    n.set("tab", "results");
+    n.set("sort", key);
+    n.set("dir", sort === key ? (dir === "asc" ? "desc" : "asc") : opening);
     setParams(n);
   };
 
@@ -372,6 +704,7 @@ export default function Evaluation() {
             ["review", `Review${pending.length ? ` (${pending.length})` : ""}`],
             ["results", "Results"],
             ["evaluators", "Evaluators"],
+            ["plans", `Plans (${plans.length})`],
           ].map(([k, label]) => (
             <button
               key={k}
@@ -392,6 +725,25 @@ export default function Evaluation() {
       <div className="px-6 py-4">
         {tab === "review" && (
           <>
+            {action?.declared && (
+              <p className="cb-note cb-note-success mb-3 px-3 py-2.5 text-[13px]">
+                {action.declared} It is listed under{" "}
+                <button
+                  type="button"
+                  onClick={() => setTab("evaluators")}
+                  className="underline underline-offset-2"
+                >
+                  Evaluators
+                </button>{" "}
+                for the programme chair.
+              </p>
+            )}
+            {action?.error && (
+              <p className="cb-note cb-note-danger mb-3 px-3 py-2.5 text-[13px]">
+                {action.error}
+              </p>
+            )}
+
             <div className="mb-4 flex flex-wrap items-center gap-2">
               <span className="text-[13px] text-dim">Reviewing as</span>
               <select
@@ -463,6 +815,58 @@ export default function Evaluation() {
                   <p className="mt-4 text-[12px] text-faint">
                     {pending.length - 1} more after this one.
                   </p>
+
+                  {/* Behind a disclosure: it is a deliberate act, not a
+                      button to hit while reaching for the scores. */}
+                  <details className="mt-4 border-t border-line-soft pt-3">
+                    <summary className="cursor-pointer text-[12px] text-dim hover:text-strong">
+                      I have a conflict of interest with this one
+                    </summary>
+                    <Form method="post" className="mt-2 space-y-2">
+                      <input
+                        type="hidden"
+                        name="intent"
+                        value="declare_conflict"
+                      />
+                      <input
+                        type="hidden"
+                        name="assignmentId"
+                        value={current.assignmentId}
+                      />
+                      <p className="text-[12px] text-dim">
+                        This takes {current.submission?.ref} out of your queue
+                        for good, records why, and keeps auto-assign from
+                        handing it back. Anything you have already scored on
+                        it is discarded.
+                      </p>
+                      <select
+                        name="reason"
+                        defaultValue="same_company"
+                        aria-label="Reason for the conflict"
+                        className="w-full rounded-md border border-line-strong bg-surface px-2 py-1 text-[13px] text-strong"
+                      >
+                        {CONFLICT_REASONS.map((r) => (
+                          <option key={r.key} value={r.key}>
+                            {r.label}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        disabled={busy}
+                        onClick={(e) => {
+                          if (
+                            !confirm(
+                              `Declare a conflict on ${current.submission?.ref}?\n\nIt leaves your queue permanently and any scores you left on it are discarded. The programme chair sees that you declared it, and why.`,
+                            )
+                          )
+                            e.preventDefault();
+                        }}
+                        className="cb-btn cb-btn-danger px-2.5 py-1 text-[12px]"
+                      >
+                        Declare a conflict
+                      </button>
+                    </Form>
+                  </details>
                 </div>
 
                 <Form
@@ -485,7 +889,7 @@ export default function Evaluation() {
                       <div className="flex items-baseline justify-between">
                         <span className="text-[13px] font-medium">{c.name}</span>
                         <span className="text-[11px] text-faint">
-                          weight {c.weight}
+                          {isScored(c) ? `weight ${c.weight}` : "not scored"}
                         </span>
                       </div>
                       {c.description && (
@@ -493,34 +897,73 @@ export default function Evaluation() {
                           {c.description}
                         </p>
                       )}
-                      <div className="mt-1.5 flex gap-1">
-                        {Array.from(
-                          { length: current.scaleMax - current.scaleMin + 1 },
-                          (_, i) => current.scaleMin + i,
-                        ).map((n) => (
-                          <label key={n} className="flex-1">
-                            <input
-                              type="radio"
-                              name={`value_${c.key}`}
-                              value={n}
-                              defaultChecked={
-                                current.existing[c.key]?.value === n
-                              }
-                              required
-                              className="peer sr-only"
-                            />
-                            <span className="block cursor-pointer rounded-md border border-line-strong py-1.5 text-center text-[13px] tabular-nums text-body peer-checked:border-invert peer-checked:bg-invert peer-checked:text-invert-fg hover:bg-subtle peer-checked:hover:bg-invert">
-                              {n}
-                            </span>
-                          </label>
-                        ))}
-                      </div>
-                      <input
-                        name={`comment_${c.key}`}
-                        defaultValue={current.existing[c.key]?.comment ?? ""}
-                        placeholder="Optional note"
-                        className="mt-1.5 w-full rounded-md border border-line-strong px-2 py-1 text-[12px]"
-                      />
+                      {/* Three shapes of answer, one per criterion type.
+                          Free text has no number at all, which is why the
+                          score row's value is nullable. */}
+                      {criterionType(c) === "numeric" && (
+                        <div className="mt-1.5 flex gap-1">
+                          {Array.from(
+                            { length: current.scaleMax - current.scaleMin + 1 },
+                            (_, i) => current.scaleMin + i,
+                          ).map((n) => (
+                            <label key={n} className="flex-1">
+                              <input
+                                type="radio"
+                                name={`value_${c.key}`}
+                                value={n}
+                                defaultChecked={
+                                  current.existing[c.key]?.value === n
+                                }
+                                required
+                                className="peer sr-only"
+                              />
+                              <span className="block cursor-pointer rounded-md border border-line-strong py-1.5 text-center text-[13px] tabular-nums text-body peer-checked:border-invert peer-checked:bg-invert peer-checked:text-invert-fg hover:bg-subtle peer-checked:hover:bg-invert">
+                                {n}
+                              </span>
+                            </label>
+                          ))}
+                        </div>
+                      )}
+
+                      {criterionType(c) === "dropdown" && (
+                        <select
+                          name={`value_${c.key}`}
+                          required
+                          defaultValue={
+                            current.existing[c.key]?.value !== null &&
+                            current.existing[c.key]?.value !== undefined
+                              ? String(current.existing[c.key]?.value)
+                              : ""
+                          }
+                          className="mt-1.5 w-full rounded-md border border-line-strong bg-surface px-2 py-1.5 text-[13px] text-strong"
+                        >
+                          <option value="" disabled>
+                            Choose one
+                          </option>
+                          {(c.options ?? []).map((o) => (
+                            <option key={o.label} value={o.value}>
+                              {o.label}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+
+                      {criterionType(c) === "text" ? (
+                        <textarea
+                          name={`comment_${c.key}`}
+                          rows={3}
+                          defaultValue={current.existing[c.key]?.comment ?? ""}
+                          placeholder="Your answer"
+                          className="mt-1.5 w-full rounded-md border border-line-strong bg-surface px-2 py-1 text-[13px] text-strong"
+                        />
+                      ) : (
+                        <input
+                          name={`comment_${c.key}`}
+                          defaultValue={current.existing[c.key]?.comment ?? ""}
+                          placeholder="Optional note"
+                          className="mt-1.5 w-full rounded-md border border-line-strong px-2 py-1 text-[12px]"
+                        />
+                      )}
                     </div>
                   ))}
 
@@ -566,7 +1009,7 @@ export default function Evaluation() {
               ))}
             </div>
 
-            <div className="mb-4 flex flex-wrap gap-2">
+            <div className="mb-4 flex flex-wrap items-start gap-2">
               {plans.map((p) => (
                 <Form key={p.id} method="post">
                   <input type="hidden" name="intent" value="auto_assign" />
@@ -581,7 +1024,51 @@ export default function Evaluation() {
                   </button>
                 </Form>
               ))}
+
+              <div className="ml-auto">
+                <OptionsMenu
+                  source="evaluations"
+                  /* One row per review, which is what the export writes,
+                     rather than the number of submissions on screen. */
+                  rowCount={totals.evaluations}
+                  scopeNote={`One row per review across ${ranked.length} submission${ranked.length === 1 ? "" : "s"}, in the order on screen. Carries every criterion score, the reviewer, and their comments.`}
+                />
+              </div>
             </div>
+
+            {ranked.length > 0 && (
+              <div className="mb-2 flex flex-wrap items-baseline gap-2 text-[12px] text-dim">
+                <span>
+                  Sorted by{" "}
+                  <span className="font-medium text-body">
+                    {RESULT_SORTS.find((s) => s.key === sort)?.label.toLowerCase()}
+                  </span>
+                  ,{" "}
+                  {sort === "title"
+                    ? dir === "asc"
+                      ? "A to Z"
+                      : "Z to A"
+                    : sort === "reviews"
+                      ? dir === "desc"
+                        ? "most reviewed first"
+                        : "least reviewed first"
+                      : dir === "desc"
+                        ? "highest first"
+                        : "lowest first"}
+                  {sort === "score" && ", anything unreviewed last"}. Click a
+                  column to change it.
+                </span>
+                {(sort !== "score" || dir !== "desc") && (
+                  <button
+                    type="button"
+                    onClick={() => setSort("score")}
+                    className="text-accent-text underline-offset-2 hover:underline"
+                  >
+                    Back to the ranking
+                  </button>
+                )}
+              </div>
+            )}
 
             <div className="overflow-hidden rounded-lg border border-line bg-surface">
               {ranked.length === 0 ? (
@@ -592,22 +1079,45 @@ export default function Evaluation() {
                 <table className="w-full text-left text-[13px]">
                   <thead>
                     <tr className="border-b border-line bg-subtle text-[11px] uppercase tracking-[0.06em] text-dim">
-                      <th className="px-4 py-2 font-medium">Rank</th>
-                      <th className="px-4 py-2 font-medium">Submission</th>
+                      <th
+                        className="px-4 py-2 font-medium"
+                        title="Position by score, whatever this table is sorted by"
+                      >
+                        Rank
+                      </th>
+                      <SortHeader
+                        column="title"
+                        label="Submission"
+                        sort={sort}
+                        dir={dir}
+                        onSort={setSort}
+                      />
                       <th className="px-4 py-2 font-medium">Track</th>
-                      <th className="px-4 py-2 font-medium">Score</th>
-                      <th className="px-4 py-2 font-medium">Reviews</th>
+                      <SortHeader
+                        column="score"
+                        label="Score"
+                        sort={sort}
+                        dir={dir}
+                        onSort={setSort}
+                      />
+                      <SortHeader
+                        column="reviews"
+                        label="Reviews"
+                        sort={sort}
+                        dir={dir}
+                        onSort={setSort}
+                      />
                       <th className="px-4 py-2 font-medium">Status</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {ranked.map((r, i) => (
+                    {ranked.map((r) => (
                       <tr
                         key={r.id}
                         className="border-b border-line-soft last:border-0 hover:bg-subtle"
                       >
                         <td className="px-4 py-2.5 tabular-nums text-faint">
-                          {r.average !== null ? i + 1 : "—"}
+                          {r.rank ?? "—"}
                         </td>
                         <td className="px-4 py-2.5">
                           <div className="font-medium text-strong">
@@ -699,24 +1209,50 @@ export default function Evaluation() {
 
             <div className="rounded-lg border border-line bg-surface p-4">
               <h3 className="text-[13px] font-semibold">
-                Conflicts of interest
+                Conflicts of interest{" "}
+                <span className="font-normal text-faint">
+                  {conflicts.length}
+                </span>
               </h3>
               <p className="mt-0.5 text-[12px] text-dim">
                 Detected when an evaluator works at the same company as a
-                submitter. Auto-assignment routes around these.
+                speaker, or declared by the evaluator from their review
+                queue. Auto-assignment routes around both.
               </p>
               {conflicts.length === 0 ? (
-                <p className="mt-2 text-[13px] text-faint">None detected.</p>
+                <p className="mt-2 text-[13px] text-faint">
+                  None recorded. Evaluators can declare one from the Review
+                  tab.
+                </p>
               ) : (
-                <ul className="mt-2 space-y-1 text-[13px] text-body">
+                <ul className="mt-2 divide-y divide-line-soft">
                   {conflicts.map((c) => (
-                    <li key={`${c.participantId}-${c.submissionId}`}>
-                      Blocked: same company as submitter
-                      {c.autoDetected && (
-                        <span className="ml-1.5 rounded bg-muted px-1.5 py-0.5 text-[11px] text-dim">
-                          auto
-                        </span>
-                      )}
+                    <li
+                      key={`${c.participantId}-${c.submissionId}`}
+                      className="flex flex-wrap items-baseline gap-x-2 py-2 text-[13px] first:pt-0 last:pb-0"
+                    >
+                      <span className="font-medium text-strong">
+                        {[c.firstName, c.lastName].filter(Boolean).join(" ") ||
+                          c.email}
+                      </span>
+                      <span className="text-dim">cannot review</span>
+                      <span className="font-mono text-[11px] text-faint">
+                        {c.ref}
+                      </span>
+                      <span className="text-body">{c.title}</span>
+                      <span
+                        className={`cb-pill ${c.autoDetected ? "cb-pill-neutral" : "cb-pill-warn"}`}
+                        title={
+                          c.autoDetected
+                            ? "Detected by Callboard from the company on their profile"
+                            : "Declared by the evaluator from their review queue"
+                        }
+                      >
+                        {c.autoDetected ? "auto" : "declared"}
+                      </span>
+                      <span className="basis-full text-[12px] text-dim">
+                        {conflictReasonLabel(c.reason, c.autoDetected)}
+                      </span>
                     </li>
                   ))}
                 </ul>
@@ -724,7 +1260,431 @@ export default function Evaluation() {
             </div>
           </div>
         )}
+
+        {tab === "plans" && (
+          <div className="max-w-3xl space-y-4">
+            {action?.planSaved && (
+              <p className="cb-note cb-note-success px-3 py-2.5 text-[13px]">
+                {action.planSaved}
+              </p>
+            )}
+            {action?.error && (
+              <p className="cb-note cb-note-danger px-3 py-2.5 text-[13px]">
+                {action.error}
+              </p>
+            )}
+
+            <div className="flex items-baseline justify-between">
+              <p className="text-[13px] text-dim">
+                What a reviewer is asked, how it is weighted, and whether they
+                see who wrote the submission.
+              </p>
+              <Link
+                to="?tab=plans&newplan=1"
+                className="cb-btn cb-btn-primary px-2.5 py-1.5 text-[13px]"
+              >
+                New plan
+              </Link>
+            </div>
+
+            {plans.length === 0 && !creatingPlan && (
+              <p className="rounded-lg border border-dashed border-line px-6 py-12 text-center text-[13px] text-dim">
+                No evaluation plans yet. Without one there is nothing to assign
+                reviewers to.
+              </p>
+            )}
+
+            {plans.map((p) => {
+              const stats = planStats.find((s) => s.id === p.id);
+              const criteria = (p.criteria ?? []) as Criterion[];
+              const editing = editPlanId === p.id;
+
+              return editing ? (
+                <PlanEditor
+                  key={p.id}
+                  plan={p}
+                  stats={stats}
+                  busy={busy}
+                />
+              ) : (
+                <div
+                  key={p.id}
+                  className="rounded-lg border border-line bg-surface p-4"
+                >
+                  <div className="flex flex-wrap items-baseline justify-between gap-2">
+                    <h3 className="text-[15px] font-semibold tracking-tight">
+                      {p.name}
+                    </h3>
+                    <div className="flex items-center gap-3 text-[12px]">
+                      <span className="text-dim">
+                        Scale {p.scaleMin} to {p.scaleMax}
+                      </span>
+                      {p.anonymize && (
+                        <span
+                          className="cb-pill cb-pill-neutral"
+                          title="Reviewers do not see who wrote the submission"
+                        >
+                          blind
+                        </span>
+                      )}
+                      <Link
+                        to={`?tab=plans&plan=${p.id}`}
+                        className="text-accent-text underline-offset-2 hover:underline"
+                      >
+                        Edit
+                      </Link>
+                    </div>
+                  </div>
+
+                  <ul className="mt-2 divide-y divide-line-soft">
+                    {criteria.map((c) => (
+                      <li
+                        key={c.key}
+                        className="flex flex-wrap items-baseline gap-x-2 py-1.5 text-[13px]"
+                      >
+                        <span className="font-medium text-strong">{c.name}</span>
+                        <span className="cb-pill cb-pill-neutral">
+                          {CRITERION_TYPES.find(
+                            (t) => t.key === criterionType(c),
+                          )?.label ?? criterionType(c)}
+                        </span>
+                        {isScored(c) && (
+                          <span className="text-[12px] tabular-nums text-dim">
+                            weight {c.weight}
+                          </span>
+                        )}
+                        {c.description && (
+                          <span className="basis-full text-[12px] text-dim">
+                            {c.description}
+                          </span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+
+                  {/* The numbers as an English sentence, the same way the
+                      form builder describes participant rules. */}
+                  <p className="mt-2 border-t border-line-soft pt-2 text-[13px] text-body">
+                    {describeWeighting(criteria)}
+                  </p>
+
+                  <p className="mt-1 text-[12px] text-dim">
+                    {stats?.assignments
+                      ? `${stats.assignments} assignment${stats.assignments === 1 ? "" : "s"} across ${stats.submissions} submission${stats.submissions === 1 ? "" : "s"}, ${stats.scoredReviews} already scored.`
+                      : "Nothing assigned to it yet."}
+                  </p>
+                </div>
+              );
+            })}
+
+            {creatingPlan && <PlanEditor busy={busy} />}
+          </div>
+        )}
       </div>
     </div>
   );
 }
+
+/* --- Plan editor ------------------------------------------------------ */
+
+type CriterionRow = Criterion & { rowId: string };
+
+function PlanEditor({
+  plan,
+  stats,
+  busy,
+}: {
+  plan?: {
+    id: string;
+    name: string;
+    scaleMin: number;
+    scaleMax: number;
+    anonymize: boolean;
+    criteria: unknown;
+  };
+  stats?: { assignments: number; scoredReviews: number; submissions: number };
+  busy: boolean;
+}) {
+  const isEdit = Boolean(plan);
+  const existing = ((plan?.criteria ?? []) as Criterion[]).map((c, i) => ({
+    ...c,
+    rowId: `${c.key}-${i}`,
+  }));
+
+  const [rows, setRows] = useState<CriterionRow[]>(
+    existing.length
+      ? existing
+      : [
+          {
+            rowId: "new-1",
+            key: "",
+            name: "",
+            weight: 100,
+            type: "numeric",
+            description: "",
+          },
+        ],
+  );
+  const [scaleMin, setScaleMin] = useState(plan?.scaleMin ?? 1);
+  const [scaleMax, setScaleMax] = useState(plan?.scaleMax ?? 5);
+
+  const patch = (rowId: string, next: Partial<CriterionRow>) =>
+    setRows((rs) => rs.map((r) => (r.rowId === rowId ? { ...r, ...next } : r)));
+
+  const scoredCount = stats?.scoredReviews ?? 0;
+
+  return (
+    <Form
+      method="post"
+      className="space-y-4 rounded-lg border border-accent-ring bg-surface p-4"
+    >
+      <input
+        type="hidden"
+        name="intent"
+        value={isEdit ? "plan_update" : "plan_create"}
+      />
+      {plan && <input type="hidden" name="planId" value={plan.id} />}
+
+      <div className="flex items-baseline justify-between">
+        <h3 className="text-[14px] font-semibold">
+          {isEdit ? `Edit ${plan!.name}` : "New evaluation plan"}
+        </h3>
+        <Link
+          to="?tab=plans"
+          className="text-[12px] text-dim underline-offset-2 hover:text-strong hover:underline"
+        >
+          Cancel
+        </Link>
+      </div>
+
+      {/* The warning that matters: what is already scored against this
+          plan, and what an edit will and will not do to it. */}
+      {isEdit && scoredCount > 0 && (
+        <p className="cb-note cb-note-warn px-3 py-2.5 text-[13px]">
+          {scoredCount} review{scoredCount === 1 ? " has" : "s have"} already
+          been scored against this plan. Nothing you do here deletes them.
+          Changing a weight re-totals every affected submission, and removing a
+          criterion keeps the scores on record while leaving them out of the
+          total. Changing the scale does not rescale scores already given.
+        </p>
+      )}
+
+      <div className="grid gap-3 sm:grid-cols-[1fr_auto_auto]">
+        <label className="block">
+          <span className="text-[13px] font-medium">Plan name</span>
+          <input
+            name="name"
+            defaultValue={plan?.name ?? ""}
+            placeholder="Main Program Review"
+            className={planField}
+          />
+        </label>
+        <label className="block">
+          <span className="text-[13px] font-medium">Scale from</span>
+          <input
+            name="scaleMin"
+            type="number"
+            value={scaleMin}
+            onChange={(e) => setScaleMin(Number(e.target.value))}
+            className={`${planField} w-24`}
+          />
+        </label>
+        <label className="block">
+          <span className="text-[13px] font-medium">to</span>
+          <input
+            name="scaleMax"
+            type="number"
+            value={scaleMax}
+            onChange={(e) => setScaleMax(Number(e.target.value))}
+            className={`${planField} w-24`}
+          />
+        </label>
+      </div>
+
+      <label className="flex items-start gap-2">
+        <input
+          type="checkbox"
+          name="anonymize"
+          defaultChecked={plan?.anonymize ?? false}
+          className="mt-0.5 h-4 w-4 rounded border-line-strong"
+        />
+        <span className="text-[13px]">
+          Blind review
+          <span className="block text-[12px] text-dim">
+            Reviewers see the proposal marked "blind review" and the submission
+            page hides who reviewed it from everybody else.
+          </span>
+        </span>
+      </label>
+
+      <fieldset className="space-y-3 rounded-md border border-line-soft p-3">
+        <legend className="px-1 text-[12px] font-medium text-dim">
+          Criteria
+        </legend>
+
+        {rows.map((row, i) => (
+          <div
+            key={row.rowId}
+            className="space-y-2 rounded-md border border-line-soft bg-subtle p-2.5"
+          >
+            <input type="hidden" name="c_key" value={row.key} />
+            <div className="flex flex-wrap items-end gap-2">
+              <label className="min-w-40 flex-1">
+                <span className="text-[12px] text-dim">Name</span>
+                <input
+                  name="c_name"
+                  value={row.name}
+                  onChange={(e) => patch(row.rowId, { name: e.target.value })}
+                  placeholder="Relevance"
+                  className={planField}
+                />
+              </label>
+              <label>
+                <span className="text-[12px] text-dim">Type</span>
+                <select
+                  name="c_type"
+                  value={criterionType(row)}
+                  onChange={(e) =>
+                    patch(row.rowId, {
+                      type: e.target.value as Criterion["type"],
+                    })
+                  }
+                  className={planField}
+                >
+                  {CRITERION_TYPES.map((t) => (
+                    <option key={t.key} value={t.key}>
+                      {t.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span className="text-[12px] text-dim">Weight</span>
+                <input
+                  name="c_weight"
+                  type="number"
+                  min={0}
+                  value={criterionType(row) === "text" ? 0 : row.weight}
+                  disabled={criterionType(row) === "text"}
+                  onChange={(e) =>
+                    patch(row.rowId, { weight: Number(e.target.value) })
+                  }
+                  className={`${planField} w-24`}
+                />
+              </label>
+              <button
+                type="button"
+                onClick={() =>
+                  setRows((rs) => rs.filter((r) => r.rowId !== row.rowId))
+                }
+                disabled={rows.length === 1}
+                title={
+                  row.key
+                    ? "Removes it from the plan. Scores already given against it stay on record and stop counting."
+                    : "Remove this row"
+                }
+                className="cb-btn cb-btn-danger px-2 py-1.5 text-[12px]"
+              >
+                Remove
+              </button>
+            </div>
+
+            <label className="block">
+              <span className="text-[12px] text-dim">
+                Description, shown to the reviewer
+              </span>
+              <input
+                name="c_description"
+                value={row.description ?? ""}
+                onChange={(e) =>
+                  patch(row.rowId, { description: e.target.value })
+                }
+                placeholder="Does this matter to engineers shipping today?"
+                className={planField}
+              />
+            </label>
+
+            {criterionType(row) === "dropdown" ? (
+              <label className="block">
+                <span className="text-[12px] text-dim">
+                  Options, one per line, as "Label = score"
+                </span>
+                <textarea
+                  name="c_options"
+                  rows={3}
+                  defaultValue={formatOptions(row.options)}
+                  placeholder={`Strong yes = ${scaleMax}\nMaybe = ${Math.round((scaleMin + scaleMax) / 2)}\nNo = ${scaleMin}`}
+                  className={`${planField} font-mono text-[12px]`}
+                />
+              </label>
+            ) : (
+              <input type="hidden" name="c_options" value="" />
+            )}
+
+            <p className="text-[12px] text-faint">
+              {CRITERION_TYPES.find((t) => t.key === criterionType(row))?.hint}
+            </p>
+          </div>
+        ))}
+
+        <button
+          type="button"
+          onClick={() =>
+            setRows((rs) => [
+              ...rs,
+              {
+                rowId: `new-${Date.now()}`,
+                key: "",
+                name: "",
+                weight: 10,
+                type: "numeric",
+                description: "",
+              },
+            ])
+          }
+          className="cb-btn cb-btn-secondary px-2.5 py-1 text-[12px]"
+        >
+          Add criterion
+        </button>
+      </fieldset>
+
+      {/* Live, from the rows as they stand, so the effect of a weight is
+          visible while it is being typed. */}
+      <p className="rounded-md border border-line bg-subtle px-3 py-2 text-[13px] text-body">
+        <span className="font-medium text-strong">
+          How this scores:{" "}
+        </span>
+        {describeWeighting(rows.filter((r) => r.name.trim()))}
+      </p>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          disabled={busy}
+          className="cb-btn cb-btn-primary px-3 py-1.5 text-[13px]"
+        >
+          {busy ? "Saving" : isEdit ? "Save plan" : "Create plan"}
+        </button>
+
+        {isEdit && (
+          <button
+            name="intent"
+            value="plan_delete"
+            disabled={busy}
+            onClick={(e) => {
+              const msg = stats?.assignments
+                ? `Delete "${plan!.name}"?\n\nIt has ${stats.assignments} assignment${stats.assignments === 1 ? "" : "s"}, ${stats.scoredReviews} of them already scored. Deleting the plan deletes those assignments and every score recorded against them. This one cannot be undone.\n\nDelete anyway?`
+                : `Delete "${plan!.name}"? Nothing is assigned to it.`;
+              if (!confirm(msg)) e.preventDefault();
+            }}
+            className="cb-btn cb-btn-danger ml-auto px-2.5 py-1.5 text-[13px]"
+          >
+            Delete plan
+          </button>
+        )}
+      </div>
+    </Form>
+  );
+}
+
+const planField =
+  "mt-1 w-full rounded-md border border-line-strong bg-surface px-2.5 py-1.5 text-[13px] text-strong disabled:opacity-50";

@@ -37,18 +37,24 @@ const FIELD_LABEL: Record<keyof FieldToggles, string> = {
 
 /* Which toggles are meaningful for which view, so the producer is not
    offered "Biography" on an agenda grid. */
+/* Which toggles actually change anything on each view. Company and job
+   title now ride along beside every speaker name, and the abstract
+   appears on the taller agenda blocks, so both are configurable
+   wherever they show up rather than only on the speaker views. */
 const RELEVANT: Record<string, (keyof FieldToggles)[]> = {
-  agenda: ["showSpeakers", "showTrack"],
+  agenda: ["showSpeakers", "showCompany", "showTrack", "showAbstract"],
   session_list: [
     "showTrack",
     "showFormat",
     "showLevel",
     "showSpeakers",
+    "showCompany",
     "showRoom",
     "showAbstract",
   ],
   schedule_itinerary: [
     "showSpeakers",
+    "showCompany",
     "showRoom",
     "showTrack",
     "showLevel",

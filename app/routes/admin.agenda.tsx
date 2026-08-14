@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link, useFetcher, useLoaderData, useSearchParams } from "react-router";
 import type { LoaderFunctionArgs, ActionFunctionArgs } from "react-router";
-import { and, eq, inArray, isNull, or } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull, or } from "drizzle-orm";
 import { getDb, DEMO_EVENT_ID } from "~/db/client";
 import {
   submissions,
@@ -16,14 +16,16 @@ import {
   DAY_START_HOUR,
   SLOT_MINUTES,
   detectConflicts,
+  durationDetail,
   durationFor,
+  durationLabel,
   eventDays,
   fmtTime,
   slotToUtcMs,
   utcMsToLocalParts,
   type Scheduled,
 } from "~/lib/schedule";
-import { safeZone } from "~/lib/tz";
+import { dayIsoToUtc, fmtDateIn, safeZone } from "~/lib/tz";
 import { readViewerZone } from "~/lib/viewer-tz";
 import { EventTime } from "~/components/EventTime";
 import { OptionsMenu } from "~/components/OptionsMenu";
@@ -53,6 +55,7 @@ export async function loader({ context, request }: LoaderFunctionArgs) {
       roomId: submissions.roomId,
       startsAt: submissions.startsAt,
       endsAt: submissions.endsAt,
+      isDraftSchedule: submissions.isDraftSchedule,
       trackId: submissions.trackId,
       trackName: tracks.name,
       trackColor: tracks.color,
@@ -127,6 +130,7 @@ export async function loader({ context, request }: LoaderFunctionArgs) {
         trackName: r.trackName,
         trackColor: r.trackColor,
         format: r.format,
+        isDraft: r.isDraftSchedule,
         speakers,
       });
     } else {
@@ -143,9 +147,26 @@ export async function loader({ context, request }: LoaderFunctionArgs) {
   }
 
   const zone = safeZone(event?.timezone);
-  const dayIsos = eventDays(event?.startsAt ?? null, event?.endsAt ?? null, zone);
 
-  const conflicts = detectConflicts(scheduled, dayIsos, zone);
+  /* Two different lists, on purpose.
+     The span is what the event says it runs, and it is what decides
+     whether a session falls outside event hours: the dashboard and the
+     export compute it the same way, so all three agree on the conflict
+     count.
+     The tabs are the span plus any day something is actually scheduled
+     on, so a session that ended up outside the span is still reachable
+     rather than invisible on a day with no tab. */
+  const spanDays = eventDays(event?.startsAt ?? null, event?.endsAt ?? null, zone);
+  const dayIsos = eventDays(
+    event?.startsAt ?? null,
+    event?.endsAt ?? null,
+    zone,
+    scheduled.map((s) => utcMsToLocalParts(s.startMs, zone).dayIso),
+  );
+
+  const conflicts = detectConflicts(scheduled, spanDays, zone);
+
+  const draftCount = scheduled.filter((s) => s.isDraft).length;
 
   return {
     event,
@@ -156,6 +177,8 @@ export async function loader({ context, request }: LoaderFunctionArgs) {
     unscheduled,
     dayIsos,
     conflicts,
+    draftCount,
+    publishedCount: scheduled.length - draftCount,
     ms: Date.now() - started,
   };
 }
@@ -196,11 +219,83 @@ export async function action({ context, request }: ActionFunctionArgs) {
         roomId,
         startsAt: new Date(startMs),
         endsAt: new Date(endMs),
-        isDraftSchedule: false,
+        /* A placement is a draft. Dragging a card is how a producer
+           thinks out loud, and the previous behaviour published every
+           experiment the moment it landed, with nothing on screen
+           saying so. Publishing is its own deliberate act below. */
+        isDraftSchedule: true,
         updatedAt: new Date(),
       })
       .where(eq(submissions.id, id));
     return { ok: true };
+  }
+
+  if (intent === "publish") {
+    const draft = await db
+      .select({ id: submissions.id, ref: submissions.ref })
+      .from(submissions)
+      .where(
+        and(
+          eq(submissions.eventId, DEMO_EVENT_ID),
+          eq(submissions.status, "accepted"),
+          eq(submissions.isDraftSchedule, true),
+          isNotNull(submissions.startsAt),
+        ),
+      );
+
+    if (draft.length === 0) {
+      return { ok: true, published: 0, message: "Nothing was waiting to go live." };
+    }
+
+    await db
+      .update(submissions)
+      .set({ isDraftSchedule: false, updatedAt: new Date() })
+      .where(
+        inArray(
+          submissions.id,
+          draft.map((d) => d.id),
+        ),
+      );
+
+    return {
+      ok: true,
+      published: draft.length,
+      message: `${draft.length} session${draft.length === 1 ? "" : "s"} published: ${draft.map((d) => d.ref).join(", ")}. The public agenda shows their times now.`,
+    };
+  }
+
+  if (intent === "unpublish") {
+    const live = await db
+      .select({ id: submissions.id })
+      .from(submissions)
+      .where(
+        and(
+          eq(submissions.eventId, DEMO_EVENT_ID),
+          eq(submissions.status, "accepted"),
+          eq(submissions.isDraftSchedule, false),
+          isNotNull(submissions.startsAt),
+        ),
+      );
+
+    if (live.length === 0) {
+      return { ok: true, published: 0, message: "Nothing is live to pull back." };
+    }
+
+    await db
+      .update(submissions)
+      .set({ isDraftSchedule: true, updatedAt: new Date() })
+      .where(
+        inArray(
+          submissions.id,
+          live.map((l) => l.id),
+        ),
+      );
+
+    return {
+      ok: true,
+      published: 0,
+      message: `${live.length} session${live.length === 1 ? "" : "s"} pulled back to draft. The public agenda no longer shows their times.`,
+    };
   }
 
   return { ok: false };
@@ -218,6 +313,8 @@ export default function Agenda() {
     unscheduled,
     dayIsos,
     conflicts,
+    draftCount,
+    publishedCount,
     ms,
   } = useLoaderData<typeof loader>();
   const [params, setParams] = useSearchParams();
@@ -280,6 +377,21 @@ export default function Agenda() {
             <h1 className="text-[19px] font-semibold tracking-tight">Agenda</h1>
             <p className="mt-0.5 text-[13px] text-dim">
               Drag a session onto a slot, or click it then click where it goes.
+              The{" "}
+              <Link
+                to="/admin/library?tab=rooms"
+                className="text-accent-text underline underline-offset-2"
+              >
+                rooms
+              </Link>{" "}
+              and{" "}
+              <Link
+                to="/admin/library?tab=tracks"
+                className="text-accent-text underline underline-offset-2"
+              >
+                tracks
+              </Link>{" "}
+              this grid is built from live in the library.
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -334,6 +446,78 @@ export default function Agenda() {
         </div>
       </div>
 
+      {/* Publishing is the moment the grid stops being a sketch, so it
+          is a control with a count on it rather than a side effect of
+          dropping a card. */}
+      <div className="flex flex-wrap items-center gap-3 border-b border-line bg-subtle px-6 py-2.5">
+        <span className="text-[13px] text-body">
+          {draftCount > 0 ? (
+            <>
+              <span className="font-medium text-strong">
+                {draftCount} session{draftCount === 1 ? "" : "s"}
+              </span>{" "}
+              placed but not published
+              {publishedCount > 0 && `, ${publishedCount} already live`}.
+            </>
+          ) : publishedCount > 0 ? (
+            <>
+              All {publishedCount} scheduled session
+              {publishedCount === 1 ? " is" : "s are"} live on the public
+              agenda.
+            </>
+          ) : (
+            "Nothing is scheduled yet."
+          )}
+        </span>
+
+        <div className="ml-auto flex items-center gap-2">
+          {draftCount > 0 && (
+            <button
+              type="button"
+              disabled={fetcher.state !== "idle"}
+              onClick={() => {
+                const ok = confirm(
+                  `Publish ${draftCount} session${draftCount === 1 ? "" : "s"} to the public agenda?\n\n` +
+                    `${draftCount === 1 ? "Its time and room become" : "Their times and rooms become"} visible to everyone, and ${publishedCount > 0 ? `${publishedCount} already-published session${publishedCount === 1 ? " stays" : "s stay"} as ${publishedCount === 1 ? "it is" : "they are"}` : "nothing else changes"}.` +
+                    (conflicts.length
+                      ? `\n\nNote: ${conflicts.length} unresolved conflict${conflicts.length === 1 ? "" : "s"} on this schedule.`
+                      : ""),
+                );
+                if (ok) fetcher.submit({ intent: "publish" }, { method: "post" });
+              }}
+              className="cb-btn cb-btn-primary px-3 py-1.5 text-[13px]"
+            >
+              Publish {draftCount} session{draftCount === 1 ? "" : "s"}
+            </button>
+          )}
+          {publishedCount > 0 && (
+            <button
+              type="button"
+              disabled={fetcher.state !== "idle"}
+              onClick={() => {
+                const ok = confirm(
+                  `Pull all ${publishedCount} published session${publishedCount === 1 ? "" : "s"} back to draft?\n\n` +
+                    `The public agenda stops showing their times until you publish again. Nothing is unscheduled and nobody is emailed.`,
+                );
+                if (ok)
+                  fetcher.submit({ intent: "unpublish" }, { method: "post" });
+              }}
+              className="cb-btn cb-btn-secondary px-2.5 py-1.5 text-[13px]"
+            >
+              Unpublish all
+            </button>
+          )}
+        </div>
+
+        {typeof fetcher.data === "object" &&
+          fetcher.data !== null &&
+          "message" in fetcher.data && (
+            <p className="basis-full text-[12px] text-accent-text">
+              {String((fetcher.data as { message?: string }).message)}
+            </p>
+          )}
+      </div>
+
       {(view === "grid" || view === "list") && dayIsos.length > 0 && (
         <div className="flex gap-2 border-b border-line bg-surface px-6 py-2">
           {dayIsos.map((d, i) => (
@@ -349,7 +533,10 @@ export default function Agenda() {
             >
               Day {i + 1}
               <span className="ml-1.5 text-[11px] opacity-70">
-                {new Date(d + "T12:00:00Z").toLocaleDateString("en-US", {
+                {/* Formatted in the event's zone, from noon in that zone,
+                    so the label cannot drift by a day for a producer
+                    working from another country. */}
+                {fmtDateIn(dayIsoToUtc(d, 12, 0, eventZone), eventZone, {
                   month: "short",
                   day: "numeric",
                 })}
@@ -405,7 +592,21 @@ export default function Agenda() {
                       {s.title}
                     </div>
                     <div className="mt-0.5 text-[11px] text-dim">
-                      {s.format} · {durationFor(s.format)} min
+                      {s.format} ·{" "}
+                      <span
+                        title={
+                          durationDetail(s.format).source === "parsed"
+                            ? "Length read from the format"
+                            : "No length in the format, so Callboard assumed one. Put it in the format, like Talk (30 min), to control the size of the block."
+                        }
+                        className={
+                          durationDetail(s.format).source === "parsed"
+                            ? undefined
+                            : "underline decoration-dotted underline-offset-2"
+                        }
+                      >
+                        {durationLabel(s.format)}
+                      </span>
                     </div>
                   </div>
                 ))
@@ -420,7 +621,28 @@ export default function Agenda() {
         )}
 
         <div className="min-w-0 flex-1">
-          {view === "grid" && (
+          {/* A missing room is discovered here, mid-drag, so the way to
+              add one is here rather than only in the library's own
+              navigation. */}
+          {view === "grid" && roomList.length === 0 && (
+            <div className="rounded-lg border border-dashed border-line-strong bg-surface px-6 py-16 text-center">
+              <p className="text-[14px] font-medium text-strong">
+                No rooms to schedule into
+              </p>
+              <p className="mx-auto mt-1 max-w-md text-[13px] text-dim">
+                The grid is a column per room, so it has nothing to draw until
+                the event has at least one.
+              </p>
+              <Link
+                to="/admin/library?tab=rooms"
+                className="cb-btn cb-btn-primary mt-3 inline-block px-3 py-1.5 text-[13px]"
+              >
+                Add a room
+              </Link>
+            </div>
+          )}
+
+          {view === "grid" && roomList.length > 0 && (
             <div className="overflow-x-auto rounded-lg border border-line bg-surface">
               <table className="w-full border-collapse">
                 <thead>
@@ -433,7 +655,13 @@ export default function Agenda() {
                         key={r.id}
                         className="border-b border-r border-line bg-subtle px-2 py-1.5 text-left text-[12px] font-medium text-body last:border-r-0"
                       >
-                        {r.name}
+                        <Link
+                          to="/admin/library?tab=rooms"
+                          title="Rename, resize or reorder this room"
+                          className="underline-offset-2 hover:text-strong hover:underline"
+                        >
+                          {r.name}
+                        </Link>
                         <span className="ml-1 font-normal text-faint">
                           {r.capacity}
                         </span>
@@ -502,8 +730,18 @@ export default function Agenda() {
                                   }
                                 >
                                   <div className="flex items-start justify-between gap-1">
-                                    <span className="font-mono text-[10px] text-faint">
-                                      {starting.ref}
+                                    <span className="flex items-center gap-1">
+                                      <span className="font-mono text-[10px] text-faint">
+                                        {starting.ref}
+                                      </span>
+                                      {starting.isDraft && (
+                                        <span
+                                          className="cb-pill cb-pill-warn"
+                                          title="Placed but not published: the public agenda does not show this time yet"
+                                        >
+                                          draft
+                                        </span>
+                                      )}
                                     </span>
                                     <fetcher.Form method="post">
                                       <input
@@ -529,6 +767,17 @@ export default function Agenda() {
                                   </div>
                                   <div className="mt-0.5 text-[11px] text-dim">
                                     {starting.speakers.map((s) => s.name).join(", ")}
+                                  </div>
+                                  <div
+                                    className="text-[10px] text-faint"
+                                    title={
+                                      durationDetail(starting.format).source ===
+                                      "parsed"
+                                        ? "Length read from the format"
+                                        : "No length in the format, so Callboard assumed one"
+                                    }
+                                  >
+                                    {durationLabel(starting.format)}
                                   </div>
                                   {bad && (
                                     <div className="mt-1 text-[10px] font-medium text-danger">
@@ -624,6 +873,16 @@ export default function Agenda() {
 
           {view === "track" && (
             <div className="space-y-4">
+              <p className="text-[12px] text-dim">
+                Grouped by the track on each submission.{" "}
+                <Link
+                  to="/admin/library?tab=tracks"
+                  className="text-accent-text underline underline-offset-2"
+                >
+                  Add or rename a track
+                </Link>
+                .
+              </p>
               {[...new Set(scheduled.map((s) => s.trackName ?? "Unassigned"))].map(
                 (name) => (
                   <div

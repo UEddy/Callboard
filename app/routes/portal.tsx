@@ -1,6 +1,7 @@
 import { useState } from "react";
 import {
   Form,
+  Link,
   useActionData,
   useLoaderData,
   useNavigation,
@@ -8,11 +9,14 @@ import {
 } from "react-router";
 import type { LoaderFunctionArgs, ActionFunctionArgs } from "react-router";
 import { redirect } from "react-router";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import { getDb, DEMO_EVENT_ID, cloudflareContext } from "~/db/client";
 import {
   participants,
   authTokens,
+  fieldDefinitions,
+  formFields,
+  forms,
   submissions,
   submissionParticipants,
   tasks,
@@ -29,14 +33,21 @@ import { ThemeToggle } from "~/components/ThemeToggle";
 import { EventTime } from "~/components/EventTime";
 import { fmtDateIn, safeZone } from "~/lib/tz";
 import { readViewerZone } from "~/lib/viewer-tz";
+import { closedReason, formIsOpen, readProposal, saveProposal } from "~/lib/proposal";
+import {
+  ProposalFields,
+  initialProposalValues,
+  isVisible,
+  type ProposalField,
+  type ProposalValues,
+  type TrackOption,
+} from "~/components/ProposalFields";
 import {
   acceptAttribute,
-  buildKey,
   humanSize,
   humanTypes,
   maxBytesFor,
-  publicPathFor,
-  validateUpload,
+  storeUpload as putUpload,
   type UploadKind,
 } from "~/lib/uploads";
 
@@ -58,6 +69,7 @@ export async function loader({ context, request }: LoaderFunctionArgs) {
   const db = getDb(context);
   const url = new URL(request.url);
   const token = url.searchParams.get("token");
+  const tab = url.searchParams.get("tab") ?? "home";
 
   const event = await db.query.events.findFirst({
     where: eq(events.id, DEMO_EVENT_ID),
@@ -105,9 +117,16 @@ export async function loader({ context, request }: LoaderFunctionArgs) {
       id: submissions.id,
       ref: submissions.ref,
       title: submissions.title,
+      description: submissions.description,
       status: submissions.status,
       format: submissions.format,
+      level: submissions.level,
+      answers: submissions.answers,
+      formId: submissions.formId,
       startsAt: submissions.startsAt,
+      endsAt: submissions.endsAt,
+      submittedAt: submissions.submittedAt,
+      trackId: submissions.trackId,
       trackName: tracks.name,
       roomName: rooms.name,
     })
@@ -118,7 +137,11 @@ export async function loader({ context, request }: LoaderFunctionArgs) {
     )
     .leftJoin(tracks, eq(submissions.trackId, tracks.id))
     .leftJoin(rooms, eq(submissions.roomId, rooms.id))
-    .where(eq(submissionParticipants.participantId, me.id));
+    .where(eq(submissionParticipants.participantId, me.id))
+    // Newest first, and deterministic: without this the order is
+    // whatever the query planner hands back, which can differ between
+    // two loads of the same page.
+    .orderBy(desc(submissions.refSeq));
 
   const accepted = mine.filter((s) => s.status === "accepted");
 
@@ -155,6 +178,140 @@ export async function loader({ context, request }: LoaderFunctionArgs) {
     };
   });
 
+  /* --- The Submissions tab ------------------------------------------
+     Four more queries, none of which grow with the number of rows, and
+     none of which run on the other tabs: the form behind each
+     submission, the field labels that make its answers readable, the
+     other people on it, and the tracks the edit form offers. */
+  let detail: SubmissionDetail[] = [];
+  let trackList: TrackOption[] = [];
+
+  if (tab === "submissions" && mine.length > 0) {
+    const formIds = [
+      ...new Set(mine.map((s) => s.formId).filter((f): f is string => !!f)),
+    ];
+    const ids = mine.map((s) => s.id);
+
+    const [formRows, fieldRows, peopleRows, trackRows] = await Promise.all([
+      formIds.length
+        ? db
+            .select({
+              id: forms.id,
+              name: forms.name,
+              status: forms.status,
+              closeAt: forms.closeAt,
+            })
+            .from(forms)
+            .where(inArray(forms.id, formIds))
+        : Promise.resolve([]),
+      formIds.length
+        ? db
+            .select({
+              id: formFields.id,
+              formId: formFields.formId,
+              required: formFields.required,
+              conditionalRule: formFields.conditionalRule,
+              key: fieldDefinitions.key,
+              label: fieldDefinitions.label,
+              type: fieldDefinitions.type,
+              options: fieldDefinitions.options,
+              helpText: fieldDefinitions.helpText,
+            })
+            .from(formFields)
+            .innerJoin(
+              fieldDefinitions,
+              eq(formFields.fieldDefinitionId, fieldDefinitions.id),
+            )
+            .where(
+              and(
+                inArray(formFields.formId, formIds),
+                eq(formFields.step, "submission"),
+              ),
+            )
+            .orderBy(asc(formFields.sortOrder))
+        : Promise.resolve([]),
+      db
+        .select({
+          submissionId: submissionParticipants.submissionId,
+          participantId: participants.id,
+          firstName: participants.firstName,
+          lastName: participants.lastName,
+          email: participants.email,
+          role: submissionParticipants.role,
+          isPrimary: submissionParticipants.isPrimary,
+        })
+        .from(submissionParticipants)
+        .innerJoin(
+          participants,
+          eq(submissionParticipants.participantId, participants.id),
+        )
+        .where(inArray(submissionParticipants.submissionId, ids))
+        .orderBy(asc(submissionParticipants.sortOrder)),
+      db
+        .select({ id: tracks.id, name: tracks.name })
+        .from(tracks)
+        .where(eq(tracks.eventId, DEMO_EVENT_ID))
+        .orderBy(tracks.sortOrder),
+    ]);
+
+    trackList = trackRows;
+
+    const formById = new Map(formRows.map((f) => [f.id, f]));
+
+    const fieldsByForm: Record<string, ProposalField[]> = {};
+    for (const f of fieldRows) {
+      (fieldsByForm[f.formId] ??= []).push({
+        id: f.id,
+        required: f.required,
+        conditionalRule: f.conditionalRule ?? null,
+        key: f.key,
+        label: f.label,
+        type: f.type,
+        options: f.options ?? null,
+        helpText: f.helpText,
+      });
+    }
+
+    const peopleBySubmission: Record<string, SubmissionPerson[]> = {};
+    for (const p of peopleRows) {
+      (peopleBySubmission[p.submissionId] ??= []).push({
+        id: p.participantId,
+        name: [p.firstName, p.lastName].filter(Boolean).join(" ") || p.email,
+        role: p.role,
+        isPrimary: p.isPrimary,
+        isMe: p.participantId === me.id,
+      });
+    }
+
+    detail = mine.map((s) => {
+      const form = s.formId ? (formById.get(s.formId) ?? null) : null;
+      // The window is decided here, once, and the same answer drives the
+      // Edit button, the read-only rendering and the action's own check.
+      const canEdit = formIsOpen(form);
+      return {
+        id: s.id,
+        ref: s.ref,
+        title: s.title,
+        description: s.description,
+        status: s.status,
+        format: s.format,
+        level: s.level,
+        answers: (s.answers ?? {}) as Record<string, unknown>,
+        trackId: s.trackId,
+        trackName: s.trackName,
+        roomName: s.roomName,
+        startsAt: s.startsAt ? new Date(s.startsAt).getTime() : null,
+        endsAt: s.endsAt ? new Date(s.endsAt).getTime() : null,
+        submittedAt: s.submittedAt ? new Date(s.submittedAt).getTime() : null,
+        formName: form?.name ?? null,
+        canEdit,
+        closedNote: canEdit ? null : closedReason(form, eventZone),
+        fields: s.formId ? (fieldsByForm[s.formId] ?? []) : [],
+        people: peopleBySubmission[s.id] ?? [],
+      };
+    });
+  }
+
   return {
     state: "in" as const,
     event,
@@ -164,54 +321,56 @@ export async function loader({ context, request }: LoaderFunctionArgs) {
     mine,
     accepted,
     myTasks,
+    detail,
+    trackList,
     ms: Date.now() - started,
   };
 }
 
-/* Takes a File off the form, validates it, and puts it in R2. Returns the
-   public path, or a message the speaker can act on. Never throws: a
-   rejected file is an ordinary outcome of asking people for files. */
+export type SubmissionPerson = {
+  id: string;
+  name: string;
+  role: string;
+  isPrimary: boolean;
+  isMe: boolean;
+};
+
+export type SubmissionDetail = {
+  id: string;
+  ref: string;
+  title: string;
+  description: string | null;
+  status: string;
+  format: string | null;
+  level: string | null;
+  answers: Record<string, unknown>;
+  trackId: string | null;
+  trackName: string | null;
+  roomName: string | null;
+  startsAt: number | null;
+  endsAt: number | null;
+  submittedAt: number | null;
+  formName: string | null;
+  canEdit: boolean;
+  closedNote: string | null;
+  fields: ProposalField[];
+  people: SubmissionPerson[];
+};
+
+/* The speaker's side of an upload. The work is in ~/lib/uploads, shared
+   with the producer's side on /admin/people, so a file uploaded for
+   somebody lands in exactly the same place as one they upload
+   themselves. */
 async function storeUpload(
   context: Parameters<typeof getDb>[0],
   file: File,
   kind: UploadKind,
   eventId: string,
   participantId: string,
-): Promise<{ ok: true; url: string } | { ok: false; message: string }> {
+) {
   const { env } = context.get(cloudflareContext);
   const bucket = (env as unknown as { BUCKET?: R2Bucket }).BUCKET;
-
-  if (!bucket) {
-    return {
-      ok: false,
-      message:
-        "File storage is not set up on this deployment. Paste a link instead.",
-    };
-  }
-
-  const checked = await validateUpload(file, kind);
-  if (!checked.ok) return { ok: false, message: checked.message };
-
-  const key = buildKey(eventId, participantId, checked.filename);
-
-  try {
-    await bucket.put(key, checked.bytes, {
-      httpMetadata: { contentType: checked.contentType },
-      customMetadata: {
-        eventId,
-        participantId,
-        originalName: file.name.slice(0, 200),
-        uploadedAt: new Date().toISOString(),
-      },
-    });
-  } catch (e) {
-    return {
-      ok: false,
-      message: `The upload did not complete. Try again, or paste a link instead. (${String(e).slice(0, 120)})`,
-    };
-  }
-
-  return { ok: true, url: publicPathFor(key) };
+  return await putUpload(bucket, file, kind, eventId, participantId);
 }
 
 export async function action({ context, request }: ActionFunctionArgs) {
@@ -274,8 +433,14 @@ export async function action({ context, request }: ActionFunctionArgs) {
       templateKey: "magic_link",
       toEmail: person.email,
       subject,
+      bodyHtml: html,
       status: result.ok ? (result.simulated ? "queued" : "sent") : "failed",
       error: result.error ?? null,
+      /* Kept on failure so the organiser can retrieve the link from
+         /admin/emails and pass it on. This is the same token that was
+         already minted for this one person, so nothing new is granted
+         and nothing here is visible to the visitor. */
+      recoveryLink: result.ok ? null : url,
       sentAt: result.ok && !result.simulated ? new Date() : null,
     });
 
@@ -321,6 +486,11 @@ export async function action({ context, request }: ActionFunctionArgs) {
       lastName: String(fd.get("lastName") ?? "") || null,
       company: String(fd.get("company") ?? "") || null,
       jobTitle: String(fd.get("jobTitle") ?? "") || null,
+      // Free text on purpose. A dropdown here is a list that is either
+      // wrong or endless, and both of these are things people should be
+      // able to write in their own words or leave blank.
+      pronouns: String(fd.get("pronouns") ?? "").trim() || null,
+      gender: String(fd.get("gender") ?? "").trim() || null,
       bio: String(fd.get("bio") ?? "") || null,
       links: {
         linkedin: String(fd.get("linkedin") ?? ""),
@@ -353,6 +523,50 @@ export async function action({ context, request }: ActionFunctionArgs) {
       .set(patch)
       .where(eq(participants.id, session.participantId));
     return { saved: !uploadError, uploadError };
+  }
+
+  /* --- Edit a submission -------------------------------------------- */
+  if (intent === "save_submission") {
+    const submissionId = String(fd.get("submissionId") ?? "");
+
+    // The id arrives from the browser, so this is the check that stops
+    // one speaker editing another's proposal by changing a hidden field.
+    const link = await db.query.submissionParticipants.findFirst({
+      where: and(
+        eq(submissionParticipants.submissionId, submissionId),
+        eq(submissionParticipants.participantId, session.participantId),
+      ),
+    });
+    if (!link) return redirect("/portal?tab=submissions");
+
+    const sub = await db.query.submissions.findFirst({
+      where: eq(submissions.id, submissionId),
+    });
+    if (!sub) return redirect("/portal?tab=submissions");
+
+    const form = sub.formId
+      ? await db.query.forms.findFirst({ where: eq(forms.id, sub.formId) })
+      : null;
+
+    // Re-checked server side. A close date that only hides a button is
+    // not a close date, and the browser still has the old page open.
+    if (!formIsOpen(form)) {
+      return {
+        saved: false,
+        editError:
+          "Editing has closed for this form, so nothing was saved. Reload to see the current version.",
+        submissionId,
+      };
+    }
+
+    await saveProposal(db, {
+      submissionId,
+      eventId: sub.eventId,
+      formId: sub.formId,
+      patch: readProposal(fd),
+    });
+
+    return redirect(`/portal?tab=submissions&saved=${submissionId}`);
   }
 
   if (intent === "complete_task") {
@@ -501,6 +715,46 @@ function UploadField({
 
 
 
+/* Suggestions, not options. Both fields save whatever is typed, and an
+   empty one stays empty. */
+const PRONOUN_SUGGESTIONS = [
+  "she/her",
+  "he/him",
+  "they/them",
+  "she/they",
+  "he/they",
+  "any pronouns",
+  "ask me",
+];
+
+const GENDER_SUGGESTIONS = [
+  "Woman",
+  "Man",
+  "Non-binary",
+  "Agender",
+  "Genderfluid",
+  "Prefer not to say",
+];
+
+/* Descriptions come out of a WYSIWYG field, so they arrive as HTML. The
+   portal renders them as text rather than as markup: it is the
+   speaker's own content, but it is still content from a form, and
+   nothing on this page needs the tags. */
+function toPlainText(html: string) {
+  return html
+    .replace(/<\/(p|div|li|h[1-6])>/gi, "\n")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 const STATUS_COPY: Record<string, { text: string; cls: string }> = {
   accepted: {
     text: "Accepted",
@@ -532,11 +786,256 @@ const STATUS_COPY: Record<string, { text: string; cls: string }> = {
 type PortalAction = {
   saved?: boolean;
   uploadError?: string | null;
+  editError?: string;
+  submissionId?: string;
   taskId?: string;
   sent?: boolean;
   email?: string;
   devLink?: string | null;
 };
+
+const card = "rounded-2xl border border-line bg-surface p-5 shadow-sm";
+
+/* --- One submission, in full ---------------------------------------- */
+
+/* Every answer the form collected, in the order the form asked for it,
+   under the label the speaker saw when they answered. Reading the
+   fields rather than the raw `answers` keys is the whole point: a
+   speaker should not have to work out that "workshop_prereqs" is the
+   prerequisites question they wrote three paragraphs into. */
+function answerRows(s: SubmissionDetail) {
+  const values = initialProposalValues(s);
+
+  if (s.fields.length === 0) {
+    // No form behind this one, or its fields are gone. Fall back to the
+    // columns plus whatever keys the answers blob carries, so the
+    // submission is still shown in full rather than half missing.
+    return [
+      { id: "format", label: "Format", value: s.format ?? "" },
+      { id: "track", label: "Track", value: s.trackName ?? "" },
+      { id: "level", label: "Level", value: s.level ?? "" },
+      ...Object.entries(s.answers).map(([k, v]) => ({
+        id: k,
+        label: k,
+        value: v == null ? "" : String(v),
+      })),
+    ];
+  }
+
+  return s.fields
+    .filter((f) => f.key !== "title" && f.key !== "description")
+    .filter((f) => isVisible(f, values))
+    .map((f) => ({
+      id: f.id,
+      label: f.label,
+      // The track is stored as an id, so the name is the only readable
+      // thing to show.
+      value: f.key === "track" ? (s.trackName ?? "") : (values[f.key] ?? ""),
+    }));
+}
+
+function descriptionLabel(s: SubmissionDetail) {
+  return s.fields.find((f) => f.key === "description")?.label ?? "Description";
+}
+
+function SubmissionCard({
+  s,
+  eventZone,
+  viewerZone,
+  saved,
+}: {
+  s: SubmissionDetail;
+  eventZone: string;
+  viewerZone: string | null;
+  saved: boolean;
+}) {
+  const st = STATUS_COPY[s.status] ?? STATUS_COPY.pending;
+  const rows = answerRows(s);
+  const minutes =
+    s.startsAt && s.endsAt ? Math.round((s.endsAt - s.startsAt) / 60_000) : null;
+
+  return (
+    <div className={card}>
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="font-mono text-[11px] text-faint">{s.ref}</span>
+        <h2 className="text-[16px] font-semibold text-strong">
+          {s.title || "Untitled"}
+        </h2>
+        <span
+          className={`ml-auto rounded px-1.5 py-0.5 text-[11px] font-medium ring-1 ring-inset ${st.cls}`}
+        >
+          {st.text}
+        </span>
+      </div>
+
+      <div className="mt-0.5 text-[12px] text-dim">
+        {[
+          s.formName,
+          s.submittedAt
+            ? `Submitted ${fmtDateIn(s.submittedAt, eventZone, {
+                month: "long",
+                day: "numeric",
+                year: "numeric",
+              })}`
+            : "Not submitted yet",
+        ]
+          .filter(Boolean)
+          .join(" · ")}
+      </div>
+
+      {saved && (
+        <p className="mt-3 cb-note cb-note-success px-3 py-2 text-[13px]">
+          Saved. This is what the committee now sees.
+        </p>
+      )}
+
+      {s.status === "accepted" && (
+        <div className="mt-3 rounded-lg bg-subtle px-3 py-2.5 text-[13px] text-body">
+          {s.startsAt ? (
+            <>
+              <div>
+                {fmtDateIn(s.startsAt, eventZone)} at{" "}
+                <EventTime
+                  utcMs={s.startsAt}
+                  eventZone={eventZone}
+                  viewerZone={viewerZone}
+                />
+                {minutes ? ` · ${minutes} min` : null}
+              </div>
+              <div className="mt-0.5">
+                {s.roomName ? `In ${s.roomName}` : "Room to be confirmed."}
+              </div>
+            </>
+          ) : (
+            "Scheduling is still being worked out. We will email you."
+          )}
+        </div>
+      )}
+
+      {s.description && (
+        <div className="mt-4">
+          <div className="text-[12px] text-dim">{descriptionLabel(s)}</div>
+          <div className="mt-1 whitespace-pre-wrap text-[13px] leading-relaxed text-strong">
+            {toPlainText(s.description)}
+          </div>
+        </div>
+      )}
+
+      {rows.length > 0 && (
+        <dl className="mt-4 space-y-2 border-t border-line-soft pt-3">
+          {rows.map((r) => (
+            <div key={r.id}>
+              <dt className="text-[12px] text-dim">{r.label}</dt>
+              <dd className="whitespace-pre-wrap text-[13px] text-strong">
+                {r.value || <span className="text-faint">Not answered</span>}
+              </dd>
+            </div>
+          ))}
+        </dl>
+      )}
+
+      {s.people.length > 0 && (
+        <div className="mt-4 border-t border-line-soft pt-3">
+          <div className="text-[12px] text-dim">On this submission</div>
+          <ul className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[13px]">
+            {s.people.map((p) => (
+              <li key={p.id} className="text-strong">
+                {p.name}
+                {p.isMe && <span className="text-dim"> (you)</span>}
+                <span className="text-dim">
+                  {" "}
+                  · {p.isPrimary ? `Primary ${p.role}` : p.role}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <div className="mt-4 border-t border-line-soft pt-3">
+        {s.canEdit ? (
+          /* A link rather than a button: opening the editor is a
+             navigation, and this way it survives without JavaScript and
+             can be opened in a new tab. */
+          <Link
+            to={`/portal?tab=submissions&edit=${s.id}`}
+            className="cb-btn cb-btn-secondary inline-block px-3 py-1.5 text-[13px]"
+          >
+            Edit submission
+          </Link>
+        ) : (
+          <p className="text-[12px] text-dim">{s.closedNote}</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* --- Editing one ----------------------------------------------------- */
+
+function SubmissionEditor({
+  s,
+  trackList,
+  busy,
+}: {
+  s: SubmissionDetail;
+  trackList: TrackOption[];
+  busy: boolean;
+}) {
+  const [values, setValues] = useState<ProposalValues>(() =>
+    initialProposalValues(s),
+  );
+  const set = (k: string, v: string) => setValues((x) => ({ ...x, [k]: v }));
+
+  return (
+    /* Posting to the list rather than to the editor's own URL: a save
+       that is refused because the form shut renders the list, where the
+       banner and the closed note explain what happened. A save that
+       works redirects, so this only matters on the refusal path. */
+    <Form
+      method="post"
+      action="/portal?tab=submissions"
+      className={`${card} space-y-4`}
+    >
+      <input type="hidden" name="intent" value="save_submission" />
+      <input type="hidden" name="submissionId" value={s.id} />
+
+      <div>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="font-mono text-[11px] text-faint">{s.ref}</span>
+          <h2 className="text-[16px] font-semibold text-strong">
+            Edit your submission
+          </h2>
+        </div>
+        <p className="mt-0.5 text-[13px] text-dim">
+          Changes are visible to the committee straight away.
+        </p>
+      </div>
+
+      <ProposalFields
+        fields={s.fields}
+        trackList={trackList}
+        values={values}
+        onChange={set}
+      />
+
+      <div className="flex gap-2">
+        <button
+          disabled={busy}
+          className="cb-btn cb-btn-primary px-4 py-2 text-[14px]"
+        >
+          {busy ? "Saving" : "Save changes"}
+        </button>
+        <Link
+          to="/portal?tab=submissions"
+          className="cb-btn cb-btn-secondary inline-block px-4 py-2 text-[14px]"
+        >
+          Cancel
+        </Link>
+      </div>
+    </Form>
+  );
+}
 
 export default function Portal() {
   const data = useLoaderData<typeof loader>();
@@ -545,6 +1044,18 @@ export default function Portal() {
   const busy = nav.state !== "idle";
   const [params, setParams] = useSearchParams();
   const tab = params.get("tab") ?? "home";
+  const editing = params.get("edit");
+  const justSaved = params.get("saved");
+
+  /* Tab changes drop the per submission state with them, so switching
+     away from a half finished edit and back does not reopen it. */
+  const goTab = (next: string) => {
+    const n = new URLSearchParams(params);
+    n.set("tab", next);
+    n.delete("edit");
+    n.delete("saved");
+    setParams(n);
+  };
 
   const shell = (children: React.ReactNode, showTabs = false) => (
     <div className="min-h-screen bg-canvas px-4 py-10">
@@ -575,16 +1086,13 @@ export default function Portal() {
           <div className="mb-4 flex gap-1">
             {[
               ["home", "Home"],
+              ["submissions", "Submissions"],
               ["tasks", "Tasks"],
               ["profile", "Profile"],
             ].map(([k, label]) => (
               <button
                 key={k}
-                onClick={() => {
-                  const n = new URLSearchParams(params);
-                  n.set("tab", k);
-                  setParams(n);
-                }}
+                onClick={() => goTab(k)}
                 className={[
                   "rounded-lg px-3 py-1.5 text-[13px]",
                   tab === k
@@ -607,8 +1115,6 @@ export default function Portal() {
       </div>
     </div>
   );
-
-  const card = "rounded-2xl border border-line bg-surface p-5 shadow-sm";
 
   if (data.state === "login" || data.state === "expired") {
     // After a successful request the form is replaced by the confirmation.
@@ -700,8 +1206,55 @@ export default function Portal() {
     );
   }
 
-  const { me, mine, accepted, myTasks } = data;
+  const { me, mine, accepted, myTasks, detail, trackList } = data;
   const open = myTasks.filter((t) => !t.done);
+
+  if (tab === "submissions") {
+    // An edit link for a submission whose form has since closed falls
+    // through to the read-only card, which says so.
+    const target = editing
+      ? detail.find((d) => d.id === editing && d.canEdit)
+      : null;
+
+    if (target) {
+      return shell(
+        <SubmissionEditor key={target.id} s={target} trackList={trackList} busy={busy} />,
+        true,
+      );
+    }
+
+    return shell(
+      <div className="space-y-3">
+        {/* A save refused because the form shut while the editor was
+            open. The card underneath says when it closed. */}
+        {action?.editError && (
+          <p className="cb-note cb-note-danger px-3 py-2.5 text-[13px]">
+            {action.editError}
+          </p>
+        )}
+        {detail.length === 0 ? (
+          <div className={card}>
+            <p className="text-[14px] font-medium">Nothing here yet</p>
+            <p className="mt-1 text-[13px] text-dim">
+              Anything you submit, on your own or with someone else, shows up
+              here in full.
+            </p>
+          </div>
+        ) : (
+          detail.map((s) => (
+            <SubmissionCard
+              key={s.id}
+              s={s}
+              eventZone={data.eventZone}
+              viewerZone={data.viewerZone}
+              saved={justSaved === s.id}
+            />
+          ))
+        )}
+      </div>,
+      true,
+    );
+  }
 
   if (tab === "tasks") {
     return shell(
@@ -841,6 +1394,53 @@ export default function Portal() {
           </label>
         </div>
 
+        {/* Both optional, both free text. The suggestions are a shortcut
+            for the common answers, not the set of allowed ones: a fixed
+            list here would be a promise that the list is complete, and
+            neither of these has a complete list. */}
+        <div className="grid grid-cols-2 gap-3">
+          <label className="block">
+            <span className="text-[13px] font-medium">
+              Pronouns <span className="font-normal text-dim">(optional)</span>
+            </span>
+            <input
+              name="pronouns"
+              list="pronoun-suggestions"
+              defaultValue={me.pronouns ?? ""}
+              placeholder="they/them"
+              className={input}
+            />
+            <datalist id="pronoun-suggestions">
+              {PRONOUN_SUGGESTIONS.map((p) => (
+                <option key={p} value={p} />
+              ))}
+            </datalist>
+            <span className="mt-1 block text-[12px] text-dim">
+              Used when we introduce you.
+            </span>
+          </label>
+          <label className="block">
+            <span className="text-[13px] font-medium">
+              Gender <span className="font-normal text-dim">(optional)</span>
+            </span>
+            <input
+              name="gender"
+              list="gender-suggestions"
+              defaultValue={me.gender ?? ""}
+              placeholder="Leave blank if you would rather not say"
+              className={input}
+            />
+            <datalist id="gender-suggestions">
+              {GENDER_SUGGESTIONS.map((g) => (
+                <option key={g} value={g} />
+              ))}
+            </datalist>
+            <span className="mt-1 block text-[12px] text-dim">
+              Not shown on the public programme.
+            </span>
+          </label>
+        </div>
+
         <label className="block">
           <span className="text-[13px] font-medium">Biography</span>
           <textarea
@@ -919,11 +1519,7 @@ export default function Portal() {
             ))}
           </ul>
           <button
-            onClick={() => {
-              const n = new URLSearchParams(params);
-              n.set("tab", "tasks");
-              setParams(n);
-            }}
+            onClick={() => goTab("tasks")}
             className="mt-2 rounded-lg cb-btn cb-btn-primary px-3 py-1.5 text-[13px]"
           >
             Take care of it
@@ -932,7 +1528,17 @@ export default function Portal() {
       )}
 
       <div className={card}>
-        <h2 className="text-[16px] font-semibold">Your submissions</h2>
+        <div className="flex items-baseline justify-between gap-3">
+          <h2 className="text-[16px] font-semibold">Your submissions</h2>
+          {mine.length > 0 && (
+            <button
+              onClick={() => goTab("submissions")}
+              className="text-[13px] text-accent-text underline-offset-2 hover:underline"
+            >
+              See them in full
+            </button>
+          )}
+        </div>
         {mine.length === 0 ? (
           <p className="mt-2 text-[13px] text-dim">
             Nothing here yet.
