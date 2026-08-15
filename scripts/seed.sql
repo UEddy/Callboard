@@ -87,8 +87,8 @@ INSERT INTO forms (
   '<p>By submitting you agree to be recorded and to have your session published on our YouTube channel.</p>',
   '<h3>Thanks, we have it.</h3><p>Reviews go out the week of September 22. You can edit your submission until the deadline from your speaker portal.</p>',
   1789491540, 1788886740, 3, 0,
-  '["swyx@ai.engineer","chrissy@ai.engineer"]',
-  '["swyx@ai.engineer"]',
+  '["marcus.bell@example.com","priya.raman@example.com"]',
+  '["marcus.bell@example.com"]',
   '[{"role":"Speaker","min":1,"max":3},{"role":"Moderator","min":0,"max":1},{"role":"Panelist","min":0,"max":4}]', 5
 );
 
@@ -131,9 +131,9 @@ INSERT INTO routing_rules (id, form_id, when_field_key, when_op, when_value, ass
 -- Participants --------------------------------------------------------------
 
 INSERT INTO participants (id, event_id, email, first_name, last_name, company, job_title, bio, links, is_evaluator, is_admin) VALUES
-  ('p_swyx', 'evt_aiewf26', 'swyx@ai.engineer', 'Shawn', 'Wang', 'AI Engineer', 'Curator', 'Organizer of the AI Engineer World''s Fair.', '{"twitter":"https://x.com/swyx"}', 0, 1),
-  ('p_chrissy', 'evt_aiewf26', 'chrissy@ai.engineer', 'Chrissy', 'Alvarez', 'AI Engineer', 'Program Director', NULL, NULL, 1, 1),
-  ('p_kelsey', 'evt_aiewf26', 'kelsey@ai.engineer', 'Kelsey', 'Mohland', 'AI Engineer', 'Producer', NULL, NULL, 1, 1),
+  ('p_bell', 'evt_aiewf26', 'marcus.bell@example.com', 'Marcus', 'Bell', 'AI Engineer', 'Curator', 'Curates the programme and opens the conference with a survey of what actually shipped.', NULL, 0, 1),
+  ('p_raman', 'evt_aiewf26', 'priya.raman@example.com', 'Priya', 'Raman', 'AI Engineer', 'Program Director', NULL, NULL, 1, 1),
+  ('p_whitfield', 'evt_aiewf26', 'dana.whitfield@example.com', 'Dana', 'Whitfield', 'AI Engineer', 'Producer', NULL, NULL, 1, 1),
   ('p_chen', 'evt_aiewf26', 'sarah.chen@vectorworks.dev', 'Sarah', 'Chen', 'Vectorworks', 'Staff Engineer', 'Sarah has spent four years making retrieval systems fail less often in production. She writes about the parts nobody benchmarks.', '{"linkedin":"https://linkedin.com/in/sarahchen","website":"https://sarahchen.dev"}', 0, 0),
   ('p_okafor', 'evt_aiewf26', 'd.okafor@runloop.io', 'Daniel', 'Okafor', 'Runloop', 'Principal Engineer', 'Daniel builds agent infrastructure and has strong opinions about sandboxing.', '{"twitter":"https://x.com/dokafor"}', 0, 0),
   ('p_lindqvist', 'evt_aiewf26', 'maja@evalkit.dev', 'Maja', 'Lindqvist', 'EvalKit', 'Founder', 'Maja started EvalKit after watching three teams ship LLM features with no regression testing at all.', '{"website":"https://evalkit.dev"}', 0, 0),
@@ -289,7 +289,7 @@ INSERT INTO submission_participants (id, submission_id, participant_id, role, so
   ('sp_4', 'sub_4', 'p_chen', 'Speaker', 0, 1),
   ('sp_5', 'sub_4', 'p_novak', 'Speaker', 1, 0),
   ('sp_6', 'sub_5', 'p_torres', 'Speaker', 0, 1),
-  ('sp_7', 'sub_6', 'p_swyx', 'Speaker', 0, 1),
+  ('sp_7', 'sub_6', 'p_bell', 'Speaker', 0, 1),
   ('sp_8', 'sub_7', 'p_ito', 'Speaker', 0, 1),
   ('sp_9', 'sub_8', 'p_ferreira', 'Speaker', 0, 1),
   ('sp_10', 'sub_9', 'p_adeyemi', 'Speaker', 0, 1),
@@ -343,26 +343,26 @@ INSERT INTO task_assignments (id, task_id, participant_id, submission_id, status
   ('ta_24', 'tsk_release', 'p_torres', 'sub_5', 'complete', 1789430400, NULL),
   ('ta_25', 'tsk_attend', 'p_torres', 'sub_5', 'complete', 1789516800, NULL),
 
-  ('ta_26', 'tsk_headshot', 'p_swyx', 'sub_6', 'complete', 1789344000, NULL),
-  ('ta_27', 'tsk_bio', 'p_swyx', 'sub_6', 'complete', 1789344000, NULL),
-  ('ta_28', 'tsk_slides', 'p_swyx', 'sub_6', 'not_started', NULL, NULL),
-  ('ta_29', 'tsk_release', 'p_swyx', 'sub_6', 'complete', 1789344000, NULL),
-  ('ta_30', 'tsk_attend', 'p_swyx', 'sub_6', 'complete', 1789344000, NULL);
+  ('ta_26', 'tsk_headshot', 'p_bell', 'sub_6', 'complete', 1789344000, NULL),
+  ('ta_27', 'tsk_bio', 'p_bell', 'sub_6', 'complete', 1789344000, NULL),
+  ('ta_28', 'tsk_slides', 'p_bell', 'sub_6', 'not_started', NULL, NULL),
+  ('ta_29', 'tsk_release', 'p_bell', 'sub_6', 'complete', 1789344000, NULL),
+  ('ta_30', 'tsk_attend', 'p_bell', 'sub_6', 'complete', 1789344000, NULL);
 
 -- Evaluation ----------------------------------------------------------------
 
-UPDATE participants SET is_evaluator = 1 WHERE id IN ('p_chrissy', 'p_kelsey');
+UPDATE participants SET is_evaluator = 1 WHERE id IN ('p_raman', 'p_whitfield');
 
 INSERT INTO assignments (id, plan_id, participant_id, submission_id, round, status) VALUES
-  ('as_1', 'plan_main', 'p_chrissy', 'sub_7', 1, 'complete'),
-  ('as_2', 'plan_main', 'p_chrissy', 'sub_8', 1, 'complete'),
-  ('as_3', 'plan_main', 'p_chrissy', 'sub_11', 1, 'pending'),
-  ('as_4', 'plan_main', 'p_chrissy', 'sub_12', 1, 'pending'),
-  ('as_5', 'plan_main', 'p_kelsey', 'sub_7', 1, 'complete'),
-  ('as_6', 'plan_main', 'p_kelsey', 'sub_8', 1, 'pending'),
-  ('as_7', 'plan_main', 'p_kelsey', 'sub_9', 1, 'complete'),
-  ('as_8', 'plan_main', 'p_kelsey', 'sub_11', 1, 'pending'),
-  ('as_9', 'plan_ws', 'p_chrissy', 'sub_4', 1, 'complete');
+  ('as_1', 'plan_main', 'p_raman', 'sub_7', 1, 'complete'),
+  ('as_2', 'plan_main', 'p_raman', 'sub_8', 1, 'complete'),
+  ('as_3', 'plan_main', 'p_raman', 'sub_11', 1, 'pending'),
+  ('as_4', 'plan_main', 'p_raman', 'sub_12', 1, 'pending'),
+  ('as_5', 'plan_main', 'p_whitfield', 'sub_7', 1, 'complete'),
+  ('as_6', 'plan_main', 'p_whitfield', 'sub_8', 1, 'pending'),
+  ('as_7', 'plan_main', 'p_whitfield', 'sub_9', 1, 'complete'),
+  ('as_8', 'plan_main', 'p_whitfield', 'sub_11', 1, 'pending'),
+  ('as_9', 'plan_ws', 'p_raman', 'sub_4', 1, 'complete');
 
 INSERT INTO scores (id, assignment_id, criterion_key, value, comment) VALUES
   ('sc_1', 'as_1', 'relevance', 5, 'Nobody is covering this and it affects a lot of people.'),

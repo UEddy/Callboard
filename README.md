@@ -7,7 +7,7 @@ Callboard is an open source call for speakers and event programme management too
 **`/admin` requires an organiser sign-in. No inbox is needed: the sign-in page prints the link on screen.**
 
 1. Open **`/admin`**. Any unauthenticated request redirects to `/admin/sign-in`.
-2. The page lists the seeded organiser accounts as buttons: **`chrissy@ai.engineer`**, `kelsey@ai.engineer`, `swyx@ai.engineer`. Click one (or type the address).
+2. The page lists the seeded organiser accounts as buttons: **`priya.raman@example.com`**, `dana.whitfield@example.com`, `marcus.bell@example.com`. Click one (or type the address).
 3. The sign-in link appears on the page. Click **Open the organiser area**.
 
 That is three clicks from a cold browser to a working session, with no email involved. The link is also sent by email, and it works either way.
