@@ -36,17 +36,20 @@ export async function loader({ context, request }: LoaderFunctionArgs) {
   const started = Date.now();
   const db = getDb(context);
 
-  const event = await db.query.events.findFirst({
+  /* The event, the rooms and the accepted sessions have nothing to say
+     to each other, so they are fetched together. speakerRows below is
+     not: it needs the session ids these produce. */
+  const eventQ = db.query.events.findFirst({
     where: eq(events.id, DEMO_EVENT_ID),
   });
 
-  const roomList = await db
+  const roomListQ = db
     .select()
     .from(rooms)
     .where(eq(rooms.eventId, DEMO_EVENT_ID))
     .orderBy(rooms.sortOrder);
 
-  const rows = await db
+  const rowsQ = db
     .select({
       id: submissions.id,
       ref: submissions.ref,
@@ -68,6 +71,12 @@ export async function loader({ context, request }: LoaderFunctionArgs) {
         eq(submissions.status, "accepted"),
       ),
     );
+
+  const [event, roomList, rows] = await Promise.all([
+    eventQ,
+    roomListQ,
+    rowsQ,
+  ]);
 
   const ids = rows.map((r) => r.id);
   const speakerRows = ids.length

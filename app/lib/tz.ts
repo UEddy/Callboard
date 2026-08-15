@@ -25,6 +25,26 @@ export type ZonedParts = {
 };
 
 const partsCache = new Map<string, Intl.DateTimeFormat>();
+const abbrCache = new Map<string, Intl.DateTimeFormat>();
+
+/* Constructing an Intl.DateTimeFormat is expensive; formatting with one
+   already built is not. The timezone picker asks for all 418 IANA zones
+   in a single render, so without this that is 418 constructions on
+   every load of the settings page. The set of zones is fixed for the
+   life of the isolate, which makes this cache bounded by the zone
+   database rather than by traffic. */
+function abbrFormatter(timeZone: string) {
+  let f = abbrCache.get(timeZone);
+  if (!f) {
+    f = new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      timeZoneName: "short",
+      hour: "numeric",
+    });
+    abbrCache.set(timeZone, f);
+  }
+  return f;
+}
 
 function partsFormatter(timeZone: string) {
   let f = partsCache.get(timeZone);
@@ -151,11 +171,7 @@ export function dayIsoIn(utcMs: number, timeZone: string) {
 export function zoneAbbr(utcMs: number, timeZone: string): string {
   const tz = safeZone(timeZone);
   try {
-    const parts = new Intl.DateTimeFormat("en-US", {
-      timeZone: tz,
-      timeZoneName: "short",
-      hour: "numeric",
-    }).formatToParts(new Date(utcMs));
+    const parts = abbrFormatter(tz).formatToParts(new Date(utcMs));
     return parts.find((p) => p.type === "timeZoneName")?.value ?? tz;
   } catch {
     return tz;

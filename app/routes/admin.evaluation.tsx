@@ -73,12 +73,15 @@ export async function loader({ context, request }: LoaderFunctionArgs) {
   const db = getDb(context);
   const url = new URL(request.url);
 
-  const plans = await db
+  /* Three reads that depend on nothing, waited on together. The
+     conflicts list is declared here rather than where it is used, so
+     it can share this trip; everything below needs ids these produce. */
+  const plansQ = db
     .select()
     .from(evaluationPlans)
     .where(eq(evaluationPlans.eventId, DEMO_EVENT_ID));
 
-  const evaluators = await db
+  const evaluatorsQ = db
     .select()
     .from(participants)
     .where(
@@ -88,54 +91,11 @@ export async function loader({ context, request }: LoaderFunctionArgs) {
       ),
     );
 
-  const asEvaluatorId = url.searchParams.get("as") ?? evaluators[0]?.id ?? "";
-
-  const allAssignments = await db
-    .select()
-    .from(assignments)
-    .where(
-      inArray(
-        assignments.planId,
-        plans.length ? plans.map((p) => p.id) : ["none"],
-      ),
-    );
-
-  const allScores = allAssignments.length
-    ? await db
-        .select()
-        .from(scores)
-        .where(
-          inArray(
-            scores.assignmentId,
-            allAssignments.map((a) => a.id),
-          ),
-        )
-    : [];
-
-  const subIds = [...new Set(allAssignments.map((a) => a.submissionId))];
-  const subRows = subIds.length
-    ? await db
-        .select({
-          id: submissions.id,
-          ref: submissions.ref,
-          title: submissions.title,
-          description: submissions.description,
-          status: submissions.status,
-          format: submissions.format,
-          trackName: tracks.name,
-          trackColor: tracks.color,
-        })
-        .from(submissions)
-        .leftJoin(tracks, eq(submissions.trackId, tracks.id))
-        .where(inArray(submissions.id, subIds))
-    : [];
-  const subById = new Map(subRows.map((s) => [s.id, s]));
-
   /* Scoped to the event rather than to submissions that currently have
      an assignment: declaring a conflict takes the assignment away, and a
      conflict that disappeared from this list the moment it did its job
      would be worse than not recording it. */
-  const conflicts = await db
+  const conflictsQ = db
     .select({
       participantId: evaluatorConflicts.participantId,
       submissionId: evaluatorConflicts.submissionId,
@@ -158,6 +118,59 @@ export async function loader({ context, request }: LoaderFunctionArgs) {
     )
     .where(eq(submissions.eventId, DEMO_EVENT_ID))
     .orderBy(asc(submissions.refSeq));
+
+  const [plans, evaluators, conflicts] = await Promise.all([
+    plansQ,
+    evaluatorsQ,
+    conflictsQ,
+  ]);
+
+  const asEvaluatorId = url.searchParams.get("as") ?? evaluators[0]?.id ?? "";
+
+  const allAssignments = await db
+    .select()
+    .from(assignments)
+    .where(
+      inArray(
+        assignments.planId,
+        plans.length ? plans.map((p) => p.id) : ["none"],
+      ),
+    );
+
+  const allScoresQ = allAssignments.length
+    ? db
+        .select()
+        .from(scores)
+        .where(
+          inArray(
+            scores.assignmentId,
+            allAssignments.map((a) => a.id),
+          ),
+        )
+    : [];
+
+  const subIds = [...new Set(allAssignments.map((a) => a.submissionId))];
+  const subRowsQ = subIds.length
+    ? db
+        .select({
+          id: submissions.id,
+          ref: submissions.ref,
+          title: submissions.title,
+          description: submissions.description,
+          status: submissions.status,
+          format: submissions.format,
+          trackName: tracks.name,
+          trackColor: tracks.color,
+        })
+        .from(submissions)
+        .leftJoin(tracks, eq(submissions.trackId, tracks.id))
+        .where(inArray(submissions.id, subIds))
+    : [];
+
+  /* Both of these need the assignment ids above, but not each other. */
+  const [allScores, subRows] = await Promise.all([allScoresQ, subRowsQ]);
+
+  const subById = new Map(subRows.map((s) => [s.id, s]));
 
   /* Weighted average per submission, normalised to the plan's scale.
      The maths lives in ~/lib/evaluation so the export prints the same

@@ -52,13 +52,18 @@ export async function loader({ context }: LoaderFunctionArgs) {
   const started = Date.now();
   const db = getDb(context);
 
-  const event = await db.query.events.findFirst({
+  /* Five reads that need nothing from each other. Defining them
+     without awaiting and handing the lot to Promise.all turns five
+     round trips to D1 into one wait. `people` and `taskRows` are
+     deliberately not here: each needs ids produced by a query above
+     it, so they stay sequential and honest about why. */
+  const eventQ = db.query.events.findFirst({
     where: eq(events.id, DEMO_EVENT_ID),
   });
 
   /* One pass over submissions supplies the counters, the status row, the
      scheduling gaps, the never-notified list and the recent table. */
-  const subs = await db
+  const subsQ = db
     .select({
       id: submissions.id,
       ref: submissions.ref,
@@ -81,6 +86,33 @@ export async function loader({ context }: LoaderFunctionArgs) {
     .leftJoin(tracks, eq(submissions.trackId, tracks.id))
     .leftJoin(rooms, eq(submissions.roomId, rooms.id))
     .where(eq(submissions.eventId, DEMO_EVENT_ID));
+
+  const taskListQ = db
+    .select()
+    .from(tasks)
+    .where(eq(tasks.eventId, DEMO_EVENT_ID));
+
+  const reviewRowsQ = db
+    .select({ submissionId: assignments.submissionId })
+    .from(assignments);
+
+  const formRowsQ = db
+    .select({
+      id: forms.id,
+      name: forms.name,
+      status: forms.status,
+      closeAt: forms.closeAt,
+    })
+    .from(forms)
+    .where(eq(forms.eventId, DEMO_EVENT_ID));
+
+  const [event, subs, taskList, reviewRows, formRows] = await Promise.all([
+    eventQ,
+    subsQ,
+    taskListQ,
+    reviewRowsQ,
+    formRowsQ,
+  ]);
 
   const people = await db
     .select({
@@ -124,11 +156,6 @@ export async function loader({ context }: LoaderFunctionArgs) {
     }
   }
   const speakerIds = [...acceptedSpeakers.keys()];
-
-  const taskList = await db
-    .select()
-    .from(tasks)
-    .where(eq(tasks.eventId, DEMO_EVENT_ID));
 
   const taskRows = speakerIds.length
     ? await db
@@ -208,9 +235,6 @@ export async function loader({ context }: LoaderFunctionArgs) {
     (p) => !p.bio?.trim() || !p.headshotUrl?.trim(),
   ).length;
 
-  const reviewRows = await db
-    .select({ submissionId: assignments.submissionId })
-    .from(assignments);
   const reviewed = new Set(reviewRows.map((r) => r.submissionId));
   const unreviewed = subs.filter(
     (s) =>
@@ -218,15 +242,6 @@ export async function loader({ context }: LoaderFunctionArgs) {
       !reviewed.has(s.id),
   ).length;
 
-  const formRows = await db
-    .select({
-      id: forms.id,
-      name: forms.name,
-      status: forms.status,
-      closeAt: forms.closeAt,
-    })
-    .from(forms)
-    .where(eq(forms.eventId, DEMO_EVENT_ID));
   const staleForms = formRows.filter(
     (f) =>
       f.status === "open" && f.closeAt && new Date(f.closeAt).getTime() < now,

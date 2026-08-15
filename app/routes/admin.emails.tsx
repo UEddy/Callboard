@@ -88,7 +88,7 @@ export async function loader({ context, request }: LoaderFunctionArgs) {
       : undefined,
   );
 
-  const rows = await db
+  const rowsQ = db
     .select({
       id: emailLog.id,
       toEmail: emailLog.toEmail,
@@ -114,7 +114,7 @@ export async function loader({ context, request }: LoaderFunctionArgs) {
   // Every key the log actually holds, so the filter cannot offer a
   // template that has never been used, or hide one whose row was
   // deleted from the templates table.
-  const usedKeys = await db
+  const usedKeysQ = db
     .select({
       key: emailLog.templateKey,
       n: sql<number>`count(*)`,
@@ -123,13 +123,13 @@ export async function loader({ context, request }: LoaderFunctionArgs) {
     .where(eq(emailLog.eventId, DEMO_EVENT_ID))
     .groupBy(emailLog.templateKey);
 
-  const statusCounts = await db
+  const statusCountsQ = db
     .select({ status: emailLog.status, n: sql<number>`count(*)` })
     .from(emailLog)
     .where(eq(emailLog.eventId, DEMO_EVENT_ID))
     .groupBy(emailLog.status);
 
-  const templates = await db
+  const templatesQ = db
     .select({
       id: emailTemplates.id,
       key: emailTemplates.key,
@@ -141,7 +141,7 @@ export async function loader({ context, request }: LoaderFunctionArgs) {
     .from(emailTemplates)
     .where(eq(emailTemplates.eventId, DEMO_EVENT_ID));
 
-  const event = await db.query.events.findFirst({
+  const eventQ = db.query.events.findFirst({
     where: eq(events.id, DEMO_EVENT_ID),
   });
 
@@ -149,8 +149,7 @@ export async function loader({ context, request }: LoaderFunctionArgs) {
      than from the provider, because the log is the thing that survives
      the provider changing its mind about its API. */
   const since = new Date(Date.now() - HEALTH_WINDOW_DAYS * 86_400_000);
-  const health = summariseHealth(
-    await db
+  const healthQ = db
       .select({
         id: emailLog.id,
         status: emailLog.status,
@@ -163,8 +162,21 @@ export async function loader({ context, request }: LoaderFunctionArgs) {
       .from(emailLog)
       .where(
         and(eq(emailLog.eventId, DEMO_EVENT_ID), gte(emailLog.createdAt, since)),
-      ),
-  );
+      );
+
+  /* Six reads, none of which needs anything from another, so they wait
+     together rather than in turn. */
+  const [rows, usedKeys, statusCounts, templates, event, healthRows] =
+    await Promise.all([
+      rowsQ,
+      usedKeysQ,
+      statusCountsQ,
+      templatesQ,
+      eventQ,
+      healthQ,
+    ]);
+
+  const health = summariseHealth(healthRows);
 
   const env = context.get(cloudflareContext).env as unknown as {
     RESEND_API_KEY?: string;
