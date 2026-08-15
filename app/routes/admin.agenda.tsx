@@ -427,7 +427,7 @@ export default function Agenda() {
               }
             />
             <span className="rounded-md bg-muted px-2 py-1 font-mono text-[11px] tabular-nums text-dim">
-              {ms} ms
+              data {ms} ms
             </span>
           </div>
         </div>

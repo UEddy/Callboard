@@ -351,7 +351,7 @@ export default function PublicEvent() {
 
         <p className="mt-6 text-[12px] text-faint">
           Powered by Callboard
-          <span className="ml-2 font-mono tabular-nums">{data.ms} ms</span>
+          <span className="ml-2 font-mono tabular-nums" title="Time spent in this page's loader fetching data. It excludes rendering, so it is not total server time: that is in the Server-Timing response header.">data {data.ms} ms</span>
         </p>
       </div>
     </div>

@@ -761,8 +761,8 @@ export default function Integrations() {
               a mirror your team can edit in.
             </p>
           </div>
-          <div className="rounded-md bg-muted px-2 py-1 font-mono text-[11px] tabular-nums text-dim">
-            {ms} ms
+          <div className="rounded-md bg-muted px-2 py-1 font-mono text-[11px] tabular-nums text-dim" title="Time spent in this page's loader fetching data. It excludes rendering, so it is not total server time: that is in the Server-Timing response header.">
+            data {ms} ms
           </div>
         </div>
       </div>

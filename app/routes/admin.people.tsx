@@ -135,9 +135,9 @@ export default function People() {
             </Link>
             <div
               className="rounded-md bg-muted px-2 py-1 font-mono text-[11px] tabular-nums text-dim"
-              title="Server render time for this page"
+              title="Time spent in this page's loader fetching data. It excludes rendering, so it is not total server time: that is in the Server-Timing response header."
             >
-              {ms} ms
+              data {ms} ms
             </div>
           </div>
         </div>

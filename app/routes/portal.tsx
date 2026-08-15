@@ -1121,7 +1121,7 @@ export default function Portal() {
 
         <div className="mt-4 flex justify-between text-[12px] text-faint">
           <span>Powered by Callboard</span>
-          <span className="font-mono tabular-nums">{data.ms} ms</span>
+          <span className="font-mono tabular-nums" title="Time spent in this page's loader fetching data. It excludes rendering, so it is not total server time: that is in the Server-Timing response header.">data {data.ms} ms</span>
         </div>
       </div>
     </div>
