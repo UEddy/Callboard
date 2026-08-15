@@ -16,6 +16,7 @@ import {
 } from "~/db/schema";
 import { buildIcs, sendEmail, render, invitationUid } from "~/lib/email";
 import { fmtWhenIn, safeZone } from "~/lib/tz";
+import { publicBaseUrl } from "~/lib/base-url";
 
 /* The email says the event's time, labelled with the real zone. No
    viewer zone here: an inbox has no reliable one, and a speaker reading
@@ -218,7 +219,7 @@ export async function action({ context, request }: ActionFunctionArgs) {
             safeZone(event.timezone),
           ),
           "room.name": sub.roomName ?? "",
-          portalUrl: `${new URL(request.url).origin}/portal`,
+          portalUrl: `${publicBaseUrl(context.get(cloudflareContext).env, request)}/portal`,
         };
 
         const subject = render(tpl?.subject ?? "Update on your submission", vars);

@@ -54,6 +54,7 @@ import {
   describeNudge,
   recentlyNudged,
 } from "~/lib/nudge";
+import { publicBaseUrl } from "~/lib/base-url";
 
 /* Used until somebody writes a review_reminder template of their own, so
    a fresh install can chase a committee rather than quietly doing
@@ -437,7 +438,7 @@ export async function action({ context, request }: ActionFunctionArgs) {
    * ------------------------------------------------------------------ */
   if (intent === "remind_reviewer" || intent === "remind_all_reviewers") {
     const env = context.get(cloudflareContext).env;
-    const origin = new URL(request.url).origin;
+    const origin = publicBaseUrl(context.get(cloudflareContext).env, request);
     const now = new Date();
 
     const targets =

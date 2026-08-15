@@ -50,6 +50,7 @@ import {
   storeUpload as putUpload,
   type UploadKind,
 } from "~/lib/uploads";
+import { publicBaseUrl } from "~/lib/base-url";
 
 const LINK_TTL_MINUTES = 30;
 
@@ -405,7 +406,11 @@ export async function action({ context, request }: ActionFunctionArgs) {
       expiresAt: new Date(Date.now() + LINK_TTL_MINUTES * 60_000),
     });
 
-    const url = `${new URL(request.url).origin}/portal?token=${token}`;
+    /* Emailed copy uses the deployment's public address; the dev
+       fallback printed on screen uses this instance's own origin,
+       because the token only exists in this instance's database. */
+    const url = `${publicBaseUrl(context.get(cloudflareContext).env, request)}/portal?token=${token}`;
+    const screenUrl = `${new URL(request.url).origin}/portal?token=${token}`;
     const event = await db.query.events.findFirst({
       where: eq(events.id, DEMO_EVENT_ID),
     });
@@ -468,7 +473,7 @@ export async function action({ context, request }: ActionFunctionArgs) {
     return {
       sent: true,
       email,
-      devLink: result.simulated ? url : null,
+      devLink: result.simulated ? screenUrl : null,
     };
   }
 

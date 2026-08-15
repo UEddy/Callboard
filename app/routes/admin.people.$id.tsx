@@ -41,6 +41,7 @@ import { fmtDateIn, safeZone } from "~/lib/tz";
 import { readViewerZone } from "~/lib/viewer-tz";
 import { EventTime } from "~/components/EventTime";
 import { Avatar, CopyLine } from "~/components/People";
+import { publicBaseUrl } from "~/lib/base-url";
 
 /* ------------------------------------------------------------------ *
  * One person, everything about them.
@@ -204,7 +205,11 @@ export async function action({ context, params, request }: ActionFunctionArgs) {
   if (!person) throw new Response("Person not found", { status: 404 });
 
   if (intent === "signin_link") {
-    const link = await mintSignInLink(db, id, new URL(request.url).origin);
+    const link = await mintSignInLink(
+      db,
+      id,
+      publicBaseUrl(context.get(cloudflareContext).env, request),
+    );
     return { signInLink: link };
   }
 

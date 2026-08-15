@@ -14,6 +14,7 @@ import {
   writeAdmin,
   clearAdmin,
 } from "~/lib/admin-auth";
+import { publicBaseUrl } from "~/lib/base-url";
 
 /* ------------------------------------------------------------------ *
  * Organiser sign-in.
@@ -153,9 +154,21 @@ export async function action({ context, request }: ActionFunctionArgs) {
     expiresAt: new Date(Date.now() + ADMIN_LINK_TTL_MINUTES * 60_000),
   });
 
-  const url = `${new URL(request.url).origin}/admin/sign-in?token=${token}${
+  const path = `/admin/sign-in?token=${token}${
     next === "/admin" ? "" : `&next=${encodeURIComponent(next)}`
   }`;
+
+  /* Two addresses for one token, deliberately.
+
+     The emailed copy has to survive the trip to an inbox, so it uses
+     the deployment's public address. The copy printed on the page is
+     for the person looking at the page, and the token it carries only
+     exists in the database this instance is talking to: pointing that
+     one at the public host would hand a developer on localhost a link
+     into production, where the token was never minted. Same token,
+     two readers, two right answers. */
+  const url = `${publicBaseUrl(env, request)}${path}`;
+  const screenUrl = `${new URL(request.url).origin}${path}`;
 
   const event = await db.query.events.findFirst({
     where: eq(events.id, DEMO_EVENT_ID),
@@ -181,7 +194,7 @@ export async function action({ context, request }: ActionFunctionArgs) {
     sent: true as const,
     email: person.email,
     delivered: result.ok && !result.simulated,
-    link: onScreen ? url : null,
+    link: onScreen ? screenUrl : null,
     error: null as string | null,
   };
 }

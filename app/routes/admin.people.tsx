@@ -10,7 +10,7 @@ import {
 } from "react-router";
 import type { LoaderFunctionArgs, ActionFunctionArgs } from "react-router";
 import { eq } from "drizzle-orm";
-import { getDb, DEMO_EVENT_ID } from "~/db/client";
+import { getDb, DEMO_EVENT_ID, cloudflareContext } from "~/db/client";
 import { participants } from "~/db/schema";
 import {
   INVOLVEMENT,
@@ -21,6 +21,7 @@ import {
   readPersonForm,
 } from "~/lib/people";
 import { Avatar, CopyLine } from "~/components/People";
+import { publicBaseUrl } from "~/lib/base-url";
 
 /* ------------------------------------------------------------------ *
  * Everyone attached to the event, in one list.
@@ -57,7 +58,7 @@ export async function action({ context, request }: ActionFunctionArgs) {
     const link = await mintSignInLink(
       db,
       personId,
-      new URL(request.url).origin,
+      publicBaseUrl(context.get(cloudflareContext).env, request),
     );
     return {
       signInLink: link,

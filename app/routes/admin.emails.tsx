@@ -38,6 +38,7 @@ import { render, sendEmail } from "~/lib/email";
 import { RECIPIENT_GROUPS, loadRecipientOptions } from "~/lib/people";
 import { BodyFrame } from "~/components/EmailBody";
 import { fmtDateIn, fmtWhenIn, safeZone } from "~/lib/tz";
+import { publicBaseUrl } from "~/lib/base-url";
 
 /* ------------------------------------------------------------------ *
  * Every email this event has sent, and the one place to send another.
@@ -221,7 +222,7 @@ export async function action({ context, request }: ActionFunctionArgs) {
   const env = context.get(cloudflareContext).env;
   const fd = await request.formData();
   const intent = String(fd.get("intent") ?? "");
-  const origin = new URL(request.url).origin;
+  const origin = publicBaseUrl(context.get(cloudflareContext).env, request);
 
   const draft = readDraft(fd);
 

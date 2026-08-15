@@ -15,6 +15,7 @@ import {
   formFields,
   fieldDefinitions,
 } from "~/db/schema";
+import { publicBaseUrl } from "~/lib/base-url";
 
 /* ------------------------------------------------------------------ *
  * JSON API.
@@ -520,7 +521,7 @@ async function handle(
       const confirmation = await sendSubmissionConfirmation(db, env, {
         submissionId: id,
         participantId: (person as { id: string }).id,
-        origin: new URL(request.url).origin,
+        origin: publicBaseUrl(context.get(cloudflareContext).env, request),
       });
 
       return json(

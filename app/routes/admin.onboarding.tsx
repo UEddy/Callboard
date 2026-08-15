@@ -27,6 +27,7 @@ import {
   agoLabel,
   recentlyNudged,
 } from "~/lib/nudge";
+import { publicBaseUrl } from "~/lib/base-url";
 
 /* ------------------------------------------------------------------ *
  * The screen a producer lives in during the two weeks before an event:
@@ -262,7 +263,7 @@ export async function action({ context, request }: ActionFunctionArgs) {
   const env = context.get(cloudflareContext).env;
   const fd = await request.formData();
   const intent = String(fd.get("intent") ?? "");
-  const origin = new URL(request.url).origin;
+  const origin = publicBaseUrl(context.get(cloudflareContext).env, request);
   const now = new Date();
 
   const targets =

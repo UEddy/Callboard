@@ -30,6 +30,7 @@ import {
   initialProposalValues,
   type ProposalValues,
 } from "~/components/ProposalFields";
+import { publicBaseUrl } from "~/lib/base-url";
 
 const STEPS = ["welcome", "account", "proposal", "speaker", "review"] as const;
 type Step = (typeof STEPS)[number];
@@ -441,7 +442,7 @@ export async function action({ context, request, params }: ActionFunctionArgs) {
         {
           submissionId: session.submissionId,
           participantId: session.participantId,
-          origin: new URL(request.url).origin,
+          origin: publicBaseUrl(context.get(cloudflareContext).env, request),
         },
       );
     }
