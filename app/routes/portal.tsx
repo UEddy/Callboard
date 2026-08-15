@@ -61,7 +61,7 @@ const DEFAULT_MAGIC_LINK = {
   bodyHtml:
     "<p>Hi {{participant.firstName}},</p>" +
     "<p>Here is your sign-in link for {{event.name}}. It works once and expires in {{expiresInMinutes}} minutes.</p>" +
-    '<p><a href="{{magicLinkUrl}}">Open your speaker portal</a></p>' +
+    '<p><a href="{{magicLinkUrl}}" rel="noreferrer">Open your speaker portal</a></p>' +
     "<p>If you did not ask for this, you can ignore it and nothing will happen.</p>",
 };
 
@@ -79,7 +79,11 @@ export async function loader({ context, request }: LoaderFunctionArgs) {
   const eventZone = safeZone(event?.timezone);
   const viewerZone = await readViewerZone(request);
 
-  /* --- Magic link arrival: verify, burn the token, set the cookie --- */
+  /* --- Magic link arrival: check it, show a button, burn nothing ---
+     Mail scanners and link previews issue GETs, and the link can exist
+     in more than one place at once, so opening the URL must not consume
+     the token. The POST behind the button does that. Single use and the
+     expiry are unchanged. */
   if (token) {
     const row = await db.query.authTokens.findFirst({
       where: eq(authTokens.token, token),
@@ -94,15 +98,20 @@ export async function loader({ context, request }: LoaderFunctionArgs) {
       new Date(row.expiresAt).getTime() > Date.now();
 
     if (valid) {
-      await db
-        .update(authTokens)
-        .set({ usedAt: new Date() })
-        .where(eq(authTokens.id, row.id));
-      return redirect("/portal", {
-        headers: {
-          "Set-Cookie": await writePortal({ participantId: row.participantId }),
-        },
+      const who = await db.query.participants.findFirst({
+        where: eq(participants.id, row.participantId),
       });
+      return {
+        state: "confirm" as const,
+        token,
+        who: who
+          ? [who.firstName, who.lastName].filter(Boolean).join(" ") || who.email
+          : "your account",
+        event,
+        eventZone,
+        viewerZone,
+        ms: Date.now() - started,
+      };
     }
     return { state: "expired" as const, event, eventZone, viewerZone, ms: Date.now() - started };
   }
@@ -475,6 +484,31 @@ export async function action({ context, request }: ActionFunctionArgs) {
       email,
       devLink: result.simulated ? screenUrl : null,
     };
+  }
+
+  /* The only place a portal token is consumed. */
+  if (intent === "consume") {
+    const token = String(fd.get("token") ?? "");
+    const row = token
+      ? await db.query.authTokens.findFirst({
+          where: eq(authTokens.token, token),
+        })
+      : null;
+    const valid =
+      row &&
+      row.purpose === "portal" &&
+      !row.usedAt &&
+      new Date(row.expiresAt).getTime() > Date.now();
+    if (!valid) return redirect("/portal?expired=1");
+    await db
+      .update(authTokens)
+      .set({ usedAt: new Date() })
+      .where(eq(authTokens.id, row.id));
+    return redirect("/portal", {
+      headers: {
+        "Set-Cookie": await writePortal({ participantId: row.participantId }),
+      },
+    });
   }
 
   const session = await readPortal(request);
@@ -1127,6 +1161,28 @@ export default function Portal() {
     </div>
   );
 
+  if (data.state === "confirm") {
+    return shell(
+      <div className={card}>
+        <h2 className="text-[16px] font-semibold">Sign in as {data.who}?</h2>
+        <p className="mt-1 text-[13px] text-body">
+          This link works once. It is used up when you press the button, not
+          when the page is opened.
+        </p>
+        <Form method="post" className="mt-4">
+          <input type="hidden" name="intent" value="consume" />
+          <input type="hidden" name="token" value={data.token} />
+          <button
+            disabled={busy}
+            className="w-full rounded-lg bg-accent-solid px-3 py-2 text-[13px] font-medium text-on-solid disabled:opacity-50"
+          >
+            {busy ? "Signing in" : "Sign in"}
+          </button>
+        </Form>
+      </div>,
+    );
+  }
+
   if (data.state === "login" || data.state === "expired") {
     // After a successful request the form is replaced by the confirmation.
     // Leaving the form up invites people to hammer it while the first mail
@@ -1162,6 +1218,7 @@ export default function Portal() {
               </p>
               <a
                 href={action.devLink}
+                rel="noreferrer"
                 className="mt-1.5 block break-all font-mono text-[12px] text-accent-text underline underline-offset-2"
               >
                 {action.devLink}

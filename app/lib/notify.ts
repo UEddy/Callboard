@@ -37,7 +37,7 @@ export const DEFAULT_SUBMISSION_CONFIRMATION = {
     "<p>Hi {{participant.firstName}},</p>" +
     "<p>Thanks for submitting <strong>{{submission.title}}</strong> to {{event.name}}.</p>" +
     "<p>Your reference is <strong>{{submission.ref}}</strong>. Quote it if you need to get in touch about this proposal.</p>" +
-    '<p><a href="{{magicLinkUrl}}">Open your speaker portal</a> to review or update it. That link signs you in directly and works once, for {{expiresInHours}} hours. After that you can request a new one at {{portalUrl}}.</p>',
+    '<p><a href="{{magicLinkUrl}}" rel="noreferrer">Open your speaker portal</a> to review or update it. That link signs you in directly and works once, for {{expiresInHours}} hours. After that you can request a new one at {{portalUrl}}.</p>',
 };
 
 export type ConfirmationResult =

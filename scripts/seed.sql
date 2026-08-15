@@ -396,7 +396,7 @@ INSERT INTO evaluator_conflicts (id, participant_id, submission_id, reason, auto
 INSERT INTO email_templates (id, event_id, key, name, subject, body_html, "trigger", attach_ics, enabled) VALUES
   ('et_confirm', 'evt_aiewf26', 'submission_confirmation', 'Submission Confirmation',
    'We have your submission: {{submission.title}}',
-   '<p>Hi {{participant.firstName}},</p><p>Thanks for submitting <strong>{{submission.title}}</strong> to {{event.name}}.</p><p>Your reference is <strong>{{submission.ref}}</strong>. Quote it if you need to get in touch about this proposal.</p><p><a href="{{magicLinkUrl}}">Open your speaker portal</a> to review or update it until {{form.closeAt}}. That link signs you in directly and works once, for {{expiresInHours}} hours. After that you can request a new one at {{portalUrl}}.</p>',
+   '<p>Hi {{participant.firstName}},</p><p>Thanks for submitting <strong>{{submission.title}}</strong> to {{event.name}}.</p><p>Your reference is <strong>{{submission.ref}}</strong>. Quote it if you need to get in touch about this proposal.</p><p><a href="{{magicLinkUrl}}" rel="noreferrer">Open your speaker portal</a> to review or update it until {{form.closeAt}}. That link signs you in directly and works once, for {{expiresInHours}} hours. After that you can request a new one at {{portalUrl}}.</p>',
    'on_submit', 0, 1),
   ('et_accept', 'evt_aiewf26', 'acceptance', 'Acceptance',
    'You are speaking at {{event.name}}',
@@ -408,7 +408,7 @@ INSERT INTO email_templates (id, event_id, key, name, subject, body_html, "trigg
    'on_decline', 0, 1),
   ('et_magic', 'evt_aiewf26', 'magic_link', 'Sign-in Link',
    'Your sign-in link for {{event.name}}',
-   '<p>Hi {{participant.firstName}},</p><p>Here is your sign-in link for {{event.name}}. It works once and expires in {{expiresInMinutes}} minutes.</p><p><a href="{{magicLinkUrl}}">Open your speaker portal</a></p><p>If you did not ask for this, you can ignore it and nothing will happen.</p>',
+   '<p>Hi {{participant.firstName}},</p><p>Here is your sign-in link for {{event.name}}. It works once and expires in {{expiresInMinutes}} minutes.</p><p><a href="{{magicLinkUrl}}" rel="noreferrer">Open your speaker portal</a></p><p>If you did not ask for this, you can ignore it and nothing will happen.</p>',
    'magic_link', 0, 1),
   ('et_reminder', 'evt_aiewf26', 'task_reminder', 'Task Reminder',
    'Still need a few things from you for {{event.name}}',

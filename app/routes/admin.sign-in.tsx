@@ -40,9 +40,33 @@ function body(name: string, url: string, eventName: string) {
   return (
     `<p>Hi ${name},</p>` +
     `<p>Here is your organiser sign-in link for ${eventName}. It works once and expires in ${ADMIN_LINK_TTL_MINUTES} minutes.</p>` +
-    `<p><a href="${url}">Open the organiser area</a></p>` +
+    `<p><a href="${url}" rel="noreferrer">Open the organiser area</a></p>` +
     `<p>This link opens the full programme manager. If you did not ask for it, ignore this email and nothing happens.</p>`
   );
+}
+
+/* A magic link is read by more things than the person it was sent to.
+   Mail scanners, link previews and browser prerenders all issue GETs,
+   and the same token is printed on screen as well as emailed, so any
+   of them arriving first would burn it and leave the human staring at
+   "already used". Validation is therefore separated from consumption:
+   a GET only checks, and only the POST from the confirm button burns.
+   Single use and the expiry are unchanged. */
+async function checkToken(db: ReturnType<typeof getDb>, token: string) {
+  if (!token) return { ok: false as const };
+  const row = await db.query.authTokens.findFirst({
+    where: eq(authTokens.token, token),
+  });
+  if (!row) return { ok: false as const };
+  const person = await db.query.participants.findFirst({
+    where: eq(participants.id, row.participantId),
+  });
+  const ok =
+    row.purpose === "admin" &&
+    !row.usedAt &&
+    new Date(row.expiresAt).getTime() > Date.now() &&
+    Boolean(person);
+  return ok ? { ok: true as const, row, person: person! } : { ok: false as const };
 }
 
 export function meta(_: MetaArgs) {
@@ -75,38 +99,23 @@ export async function loader({ context, request }: LoaderFunctionArgs) {
       ).map((p) => p.email)
     : [];
 
-  /* --- Link arrival: verify, burn, set the organiser cookie --- */
+  /* --- Link arrival: check it, show a button, burn nothing --- */
   if (token) {
-    const row = await db.query.authTokens.findFirst({
-      where: eq(authTokens.token, token),
-    });
-
-    const person = row
-      ? await db.query.participants.findFirst({
-          where: eq(participants.id, row.participantId),
-        })
-      : null;
-
-    /* The purpose check is what stops a speaker-portal link from being
-       pasted here to open the organiser area. No is_admin check: this
-       deployment lets any address in, deliberately. */
-    const valid =
-      row &&
-      row.purpose === "admin" &&
-      !row.usedAt &&
-      new Date(row.expiresAt).getTime() > Date.now() &&
-      Boolean(person);
-
-    if (valid) {
-      await db
-        .update(authTokens)
-        .set({ usedAt: new Date() })
-        .where(eq(authTokens.id, row!.id));
-      return redirect(next, {
-        headers: { "Set-Cookie": await writeAdmin({ participantId: row!.participantId }) },
-      });
+    const check = await checkToken(db, token);
+    if (!check.ok) {
+      return { state: "expired" as const, next, me: null, onScreen, suggestions, token: null };
     }
-    return { state: "expired" as const, next, me: null, onScreen, suggestions };
+    return {
+      state: "confirm" as const,
+      next,
+      me: {
+        name: [check.person.firstName, check.person.lastName].filter(Boolean).join(" "),
+        email: check.person.email,
+      },
+      onScreen,
+      suggestions,
+      token,
+    };
   }
 
   const me = await adminFromRequest(db, request);
@@ -120,6 +129,7 @@ export async function loader({ context, request }: LoaderFunctionArgs) {
     next,
     me: me ? { name: [me.firstName, me.lastName].filter(Boolean).join(" "), email: me.email } : null,
     onScreen,
+    token: null,
   };
 }
 
@@ -128,6 +138,30 @@ export async function action({ context, request }: ActionFunctionArgs) {
   const env = context.get(cloudflareContext).env;
   const fd = await request.formData();
   const intent = String(fd.get("intent"));
+
+  /* The only place a token is consumed. Re-validated here rather than
+     trusted from the form, because the form is just as forgeable as
+     the URL was. */
+  if (intent === "consume") {
+    const token = String(fd.get("token") ?? "");
+    const next = safeNext(String(fd.get("next") ?? ""));
+    const check = await checkToken(db, token);
+    if (!check.ok) {
+      return {
+        error:
+          "That link has already been used or has expired. Request another below.",
+      };
+    }
+    await db
+      .update(authTokens)
+      .set({ usedAt: new Date() })
+      .where(eq(authTokens.id, check.row.id));
+    return redirect(next, {
+      headers: {
+        "Set-Cookie": await writeAdmin({ participantId: check.row.participantId }),
+      },
+    });
+  }
 
   if (intent === "sign_out") {
     return redirect("/admin/sign-in", {
@@ -233,7 +267,37 @@ export default function AdminSignIn() {
         <p className="mt-1 text-[13px] text-dim">Organiser sign-in</p>
 
         <div className="cb-card mt-5 p-5">
-          {data.state === "in" && data.me ? (
+          {data.state === "confirm" && data.me ? (
+            /* The link was valid a moment ago. Nothing has been consumed
+               yet: that happens when this button is pressed, which is a
+               POST, which no scanner or prerender will issue. */
+            <>
+              <p className="text-[14px]">
+                Sign in as{" "}
+                <span className="font-medium">
+                  {data.me.name || data.me.email}
+                </span>
+                ?
+              </p>
+              <p className="mt-1 text-[13px] text-dim">
+                This link works once. It is used up when you press the button,
+                not when the page is opened.
+              </p>
+              <Form method="post" className="mt-4">
+                <input type="hidden" name="intent" value="consume" />
+                <input type="hidden" name="token" value={data.token ?? ""} />
+                <input type="hidden" name="next" value={data.next} />
+                <button className="cb-btn cb-btn-primary w-full px-3 py-2 text-[13px]">
+                  Sign in
+                </button>
+              </Form>
+              {result?.error && (
+                <p className="cb-note cb-note-danger mt-4 text-[13px]">
+                  {result.error}
+                </p>
+              )}
+            </>
+          ) : data.state === "in" && data.me ? (
             <>
               <p className="text-[14px]">
                 Signed in as{" "}
@@ -339,6 +403,7 @@ export default function AdminSignIn() {
                       </div>
                       <a
                         href={result.link}
+                        rel="noreferrer"
                         className="mt-2 inline-block cb-btn cb-btn-secondary px-3 py-1.5 text-[13px]"
                       >
                         Open the organiser area
