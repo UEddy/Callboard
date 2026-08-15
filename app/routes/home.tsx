@@ -1,19 +1,40 @@
-import { redirect } from "react-router";
-import type { LoaderFunctionArgs } from "react-router";
+import type {
+  ActionFunctionArgs,
+  LoaderFunctionArgs,
+  MetaArgs,
+} from "react-router";
+import SignIn, {
+  action as signInAction,
+  loader as signInLoader,
+  meta as signInMeta,
+} from "./admin.sign-in";
 
 /* ------------------------------------------------------------------ *
- * The root is the organiser area, not a framework welcome page.
+ * The root is the sign-in page.
  *
- * Somebody who types the bare domain is nearly always the person
- * running the event, so / goes to /admin, which sends them on to the
- * organiser sign-in if they are not already in. The public programme
- * is what gets linked and embedded, and it has its own stable URL at
- * /e/:eventSlug that does not depend on this hop.
+ * Not a redirect to it: a redirect costs a round trip and leaves the
+ * bare domain looking like it points somewhere else. This route shares
+ * the sign-in module outright, so / and /admin/sign-in render the same
+ * page, accept the same form and redeem the same magic link.
+ *
+ * Written as real declarations rather than `export { action } from`,
+ * because the route module analysis that decides whether a route can
+ * handle a POST does not follow re-exports: with them, / rendered
+ * correctly and then answered 405 to its own form.
  * ------------------------------------------------------------------ */
 
-export async function loader(_: LoaderFunctionArgs) {
-  // No database read: the destination is fixed, so this stays a cheap
-  // redirect rather than a query that only decides where to send one
-  // person.
-  return redirect("/admin", { headers: { "Cache-Control": "no-store" } });
+export async function loader(args: LoaderFunctionArgs) {
+  return signInLoader(args);
+}
+
+export async function action(args: ActionFunctionArgs) {
+  return signInAction(args);
+}
+
+export function meta(args: MetaArgs) {
+  return signInMeta(args);
+}
+
+export default function Home() {
+  return <SignIn />;
 }

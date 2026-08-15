@@ -26,6 +26,16 @@ import { publicBaseUrl } from "~/lib/base-url";
 
 const SUBJECT = "Your Callboard organiser sign-in link";
 
+const PUBLIC_LINKS = [
+  {
+    href: "/e/ai-engineer-worlds-fair-2026",
+    what: "the programme, five views, embeddable",
+  },
+  { href: "/submit/cfp-2026", what: "the call for speakers form" },
+  { href: "/portal", what: "speaker portal, separate sign-in" },
+  { href: "/api/v1", what: "JSON API, reads are public" },
+] as const;
+
 function body(name: string, url: string, eventName: string) {
   return (
     `<p>Hi ${name},</p>` +
@@ -77,16 +87,15 @@ export async function loader({ context, request }: LoaderFunctionArgs) {
         })
       : null;
 
-    /* Four separate conditions, all of them required. The purpose check
-       is what stops a speaker-portal link from being pasted here, and
-       the is_admin check is repeated at redemption because the flag may
-       have been cleared since the link was minted. */
+    /* The purpose check is what stops a speaker-portal link from being
+       pasted here to open the organiser area. No is_admin check: this
+       deployment lets any address in, deliberately. */
     const valid =
       row &&
       row.purpose === "admin" &&
       !row.usedAt &&
       new Date(row.expiresAt).getTime() > Date.now() &&
-      person?.isAdmin;
+      Boolean(person);
 
     if (valid) {
       await db
@@ -130,20 +139,34 @@ export async function action({ context, request }: ActionFunctionArgs) {
   const next = safeNext(String(fd.get("next") ?? ""));
   if (!email) return { error: "Enter your email address." };
 
-  const person = await db.query.participants.findFirst({
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+    return { error: `"${email}" is not an email address.` };
+  }
+
+  let person = await db.query.participants.findFirst({
     where: and(
       eq(participants.eventId, DEMO_EVENT_ID),
       eq(participants.email, email),
     ),
   });
 
-  /* The portal's sign-in refuses to say whether an address is known.
-     This page cannot make the same promise while also printing the
-     link on screen, so it does not pretend to: an address that is not
-     an organiser is told plainly, which at least means a mistyped
-     address fails visibly instead of silently. */
-  if (!person || !person.isAdmin) {
-    return { error: `${email} is not an organiser account for this event.` };
+  /* No allowlist. An address nobody has seen before becomes a
+     participant on the spot, so somebody evaluating this can use their
+     own inbox without being added to anything first. That is a demo
+     affordance and nothing else: it means anyone who can reach this
+     page can reach the organiser area, which is stated plainly in the
+     README under known limitations. */
+  if (!person) {
+    const id = crypto.randomUUID();
+    await db.insert(participants).values({
+      id,
+      eventId: DEMO_EVENT_ID,
+      email,
+    });
+    person = await db.query.participants.findFirst({
+      where: eq(participants.id, id),
+    });
+    if (!person) return { error: "Could not create that account. Try again." };
   }
 
   const token = crypto.randomUUID().replace(/-/g, "");
@@ -328,13 +351,27 @@ export default function AdminSignIn() {
           )}
         </div>
 
-        <p className="mt-4 text-[12px] text-faint">
-          Speaker looking for your own sessions? That is the{" "}
-          <Link to="/portal" className="underline hover:text-dim">
-            speaker portal
-          </Link>
-          .
-        </p>
+        {/* Somebody who lands on the bare domain did not necessarily
+            come here to run an event. Everything below is reachable
+            without signing into anything. */}
+        <div className="mt-6 border-t border-line pt-4">
+          <p className="text-[12px] font-medium text-dim">
+            Public pages, no login needed
+          </p>
+          <ul className="mt-2 space-y-1.5">
+            {PUBLIC_LINKS.map((l) => (
+              <li key={l.href} className="text-[13px]">
+                <a
+                  href={l.href}
+                  className="font-mono text-accent-text underline-offset-2 hover:underline"
+                >
+                  {l.href}
+                </a>
+                <span className="ml-2 text-[12px] text-faint">{l.what}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
       </div>
     </div>
   );

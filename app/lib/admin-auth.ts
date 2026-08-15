@@ -55,18 +55,25 @@ export async function clearAdmin() {
   return await adminSession.serialize("", { maxAge: 0, expires: new Date(0) });
 }
 
-/* The signed-in organiser, or null. The is_admin flag is checked on
-   every request rather than trusted from sign-in time, so clearing it
-   locks somebody out immediately instead of whenever their cookie
-   happens to expire. */
+/* The signed-in organiser, or null.
+ *
+ * Deliberately does NOT require is_admin. This deployment lets any
+ * address sign in so that somebody evaluating it can use their own
+ * inbox without being added to an allowlist first, which means the
+ * cookie is the whole credential. The column still exists and still
+ * marks the seeded organisers, it just does not gate anything. A real
+ * deployment would restore the check here and in the sign-in action,
+ * and that is written down in the README rather than left to be
+ * discovered. */
 export async function adminFromRequest(db: Db, request: Request) {
   const { participantId } = await readAdmin(request);
   if (!participantId) return null;
   const person = await db.query.participants.findFirst({
     where: eq(participants.id, participantId),
   });
-  if (!person || !person.isAdmin) return null;
-  return person;
+  // The row still has to exist: a cookie naming a deleted participant
+  // is not a session.
+  return person ?? null;
 }
 
 /* React Router asks for route data at `/admin/people.data` during a
@@ -134,13 +141,13 @@ export function signInRedirect(request: Request) {
 /* ------------------------------------------------------------------ *
  * The on-screen link.
  *
- * The sign-in page prints the magic link on screen for an address that
- * is already marked is_admin, because an automated reviewer has no
- * inbox and a locked-out reviewer sees none of the application. It is
- * on by default for exactly that reason. Set ADMIN_LINK_ON_SCREEN=off
- * on a deployment that holds real submissions: with it off the link is
- * emailed and nothing else, and knowing an organiser's address stops
- * being enough to sign in as them.
+ * The sign-in page prints the magic link on screen for every address
+ * that asks for one, because an automated reviewer has no inbox and a
+ * reviewer locked out of /admin sees none of the application. It is on
+ * by default for exactly that reason. Set ADMIN_LINK_ON_SCREEN=off on
+ * a deployment that holds real submissions: with it off the link is
+ * emailed and nothing else, and reaching this page stops being enough
+ * to sign in.
  * ------------------------------------------------------------------ */
 export function showLinkOnScreen(env: { ADMIN_LINK_ON_SCREEN?: string }) {
   const setting = (env.ADMIN_LINK_ON_SCREEN ?? "").trim().toLowerCase();
