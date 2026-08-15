@@ -1,6 +1,7 @@
 import { createRequestHandler, RouterContextProvider } from "react-router";
 import { cloudflareContext, dbFromEnv } from "../app/db/client";
 import {
+  adminContext,
   adminFromRequest,
   needsAdminSession,
   signInRedirect,
@@ -20,14 +21,18 @@ export default {
        nothing under /admin (page, data request, form post, CSV
        download, or any route added later) reaches the router without a
        session. */
+    const context = new RouterContextProvider();
+    context.set(cloudflareContext, { env, ctx });
+
     const { pathname } = new URL(request.url);
     if (needsAdminSession(pathname)) {
       const admin = await adminFromRequest(dbFromEnv(env), request);
       if (!admin) return signInRedirect(request);
+      // Passed on so the layout can name who is signed in without
+      // repeating the lookup.
+      context.set(adminContext, admin);
     }
 
-    const context = new RouterContextProvider();
-    context.set(cloudflareContext, { env, ctx });
     return requestHandler(request, context);
   },
 } satisfies ExportedHandler<Env>;

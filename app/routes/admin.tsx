@@ -4,17 +4,17 @@ import { eq } from "drizzle-orm";
 import { getDb, DEMO_EVENT_ID } from "~/db/client";
 import { events } from "~/db/schema";
 import { ThemeToggle } from "~/components/ThemeToggle";
-import { adminFromRequest } from "~/lib/admin-auth";
+import { adminContext } from "~/lib/admin-auth";
 
-export async function loader({ context, request }: LoaderFunctionArgs) {
+export async function loader({ context }: LoaderFunctionArgs) {
   const db = getDb(context);
   const event = await db.query.events.findFirst({
     where: eq(events.id, DEMO_EVENT_ID),
   });
   /* The worker has already refused this request if there is no valid
-     organiser session, so this is for showing who that is, not for
-     deciding whether to. */
-  const me = await adminFromRequest(db, request);
+     organiser session, and it passes the row it loaded through the
+     context, so this is a read rather than a second query. */
+  const me = context.get(adminContext);
   return {
     event,
     me: me

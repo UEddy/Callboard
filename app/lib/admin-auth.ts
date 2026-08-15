@@ -1,7 +1,14 @@
-import { createCookie, redirect } from "react-router";
+import { createContext, createCookie, redirect } from "react-router";
 import { eq } from "drizzle-orm";
 import { participants } from "~/db/schema";
 import type { Db } from "~/db/client";
+
+/* The gate in the worker has already loaded the signed-in organiser by
+   the time any loader runs, so it hands the row on rather than making
+   the layout ask for the same person a second time. One request, one
+   lookup. */
+export const adminContext = createContext<AdminUser | null>(null);
+export type AdminUser = Awaited<ReturnType<typeof adminFromRequest>>;
 
 /* ------------------------------------------------------------------ *
  * Organiser authentication.
