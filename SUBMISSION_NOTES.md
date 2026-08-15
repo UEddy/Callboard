@@ -51,13 +51,12 @@ A FIVE MINUTE PATH
    It also says plainly that the rule lists an address for notification but that
    rule driven email is not wired up, so nothing was sent.
 5. /admin/decisions, commit the accept queue. The email log fills with one row
-   per recipient and the provider's response. Acceptance mail for a session that
-   already has a time on the agenda carries a real RFC 5545 invite with a stable
-   UID and a sequence number, so assigning a room later updates the speaker's
-   existing calendar entry instead of creating a second one. The three
-   submissions sitting in the accept queue are not scheduled yet, so their
-   acceptance mail carries no invite; to see one, resend a decision for a
-   session that is already on the grid, such as SESS-1.
+   per recipient, the provider's response, and a calendar sequence number.
+   All three acceptance emails carry a real RFC 5545 invite with a stable UID.
+   ABS-2 is seeded with a time but no room, so its invite goes out with no
+   location: give it a room on the agenda and resend, and the sequence steps
+   from 0 to 1 against the same UID, which updates the speaker's existing
+   calendar entry instead of creating a second one.
 6. /admin/agenda, Conflicts tab. Three conflicts are seeded on purpose: a
    speaker in two places at once, a room double booked, and two sessions from
    the same track running opposite each other. Drag a session between rooms and

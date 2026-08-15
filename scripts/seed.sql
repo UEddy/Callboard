@@ -198,14 +198,14 @@ INSERT INTO submissions (id, event_id, form_id, ref, ref_seq, kind, title, descr
    '<p>Tokenization assumptions baked into most retrieval stacks quietly degrade non-Latin languages. Measurements and fixes.</p>',
    'accept_queue', 'trk_rag', 'Talk (25 min)', 'Advanced',
    '{"takeaways":"Where tokenizers hurt recall\nBenchmark results\nPractical mitigations"}',
-   '["tag_research"]', NULL, NULL, NULL, 1, 1788825600, NULL, NULL),
+   '["tag_research"]', 'rm_presidio', 1791831600, 1791833100, 1, 1788825600, NULL, NULL),
 
   ('sub_8', 'evt_aiewf26', 'frm_cfp26', 'SESS-8', 8, 'sessions',
    'Observability for Agent Traces',
    '<p>Agent runs are trees, not lines. Standard APM tooling renders them uselessly. What we built instead.</p>',
    'accept_queue', 'trk_evals', 'Talk (25 min)', 'Intermediate',
    '{"takeaways":"Why span-based tracing breaks\nA tree-first data model\nOpen source tooling"}',
-   '["tag_oss"]', NULL, NULL, NULL, 1, 1788912000, NULL, NULL),
+   '["tag_oss"]', 'rm_mission', 1791833400, 1791834900, 1, 1788912000, NULL, NULL),
 
   ('sub_9', 'evt_aiewf26', 'frm_cfp26', 'SESS-9', 9, 'sessions',
    'Introducing ParallelGraph Cloud',
@@ -264,15 +264,21 @@ INSERT INTO forms (
   '[{"role":"Speaker","min":1,"max":2}]', 2
 );
 
-INSERT INTO submissions (id, event_id, form_id, ref, ref_seq, kind, title, description, status, track_id, format, level, answers, tag_ids, is_draft_schedule, submitted_at) VALUES
+INSERT INTO submissions (id, event_id, form_id, ref, ref_seq, kind, title, description, status, track_id, format, level, answers, tag_ids, room_id, starts_at, ends_at, is_draft_schedule, submitted_at) VALUES
   ('sub_a1', 'evt_aiewf26', 'frm_abs26', 'ABS-1', 101, 'abstracts',
    'Something About Vector Index Maintenance',
    '<p>Rough idea: nobody talks about what happens to an index six months in. I have numbers.</p>',
-   'pending', 'trk_infra', NULL, NULL, '{}', NULL, 1, 1789257600),
+   'pending', 'trk_infra', NULL, NULL, '{}', NULL, NULL, NULL, NULL, 1, 1789257600),
+  -- Deliberately has a time but no room. The agenda treats a session as
+  -- placed only when it has both, so this one still sits in the "Not
+  -- scheduled" tray, while having a time means its acceptance mail does
+  -- carry an invite. That invite goes out with no location, and assigning
+  -- a room later re-sends the same UID with the sequence stepped on, which
+  -- updates the speaker's existing calendar entry rather than adding one.
   ('sub_a2', 'evt_aiewf26', 'frm_abs26', 'ABS-2', 102, 'abstracts',
    'Teaching Non Engineers To Read Evals',
    '<p>Half formed. Our PMs could not read our eval dashboards, so we rebuilt them.</p>',
-   'accept_queue', 'trk_evals', NULL, NULL, '{}', NULL, 1, 1789344000);
+   'accept_queue', 'trk_evals', NULL, NULL, '{}', NULL, NULL, 1791837000, 1791838500, 1, 1789344000);
 
 -- Speakers on submissions ---------------------------------------------------
 
